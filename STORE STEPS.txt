@@ -1,0 +1,62 @@
+PUBLISHING CONVERT TO MARKDOWN ON THE MICROSOFT STORE
+=====================================================
+
+A. TRY THE STORE VERSION ON YOUR PC FIRST (optional, recommended)
+  1. Settings > Apps > Convert to Markdown > Uninstall (the Setup version). Choose "No" when it asks to
+     delete the AI: the Store version copies your downloaded model instead of downloading it again.
+  2. Double-click "Test Store package.cmd". It builds the Store package and installs a test copy.
+  3. Start menu > Convert to Markdown: the welcome screens appear (choose the AI).
+  4. Right-click a PDF: "Convert to Markdown" should be at the top of the menu, and in Open with.
+  5. When happy: Settings > Apps > Convert to Markdown > Uninstall (removes the test copy).
+
+B. MAKE YOUR DEVELOPER ACCOUNT (once, free for individuals)
+  1. Go to https://storedeveloper.microsoft.com and choose "Sign up" as an Individual developer.
+  2. Sign in with your Microsoft account (yazeed.aluayr@hotmail.com), then verify yourself with a government ID and a selfie.
+  3. Publisher display name: the name people will see as the publisher (for example "Yazeed ...").
+     Choose carefully: it is shown on the Store page and on the app.
+
+C. RESERVE THE APP NAME
+  1. Partner Center (https://partner.microsoft.com/dashboard, signed in with yazeed.aluayr@hotmail.com) > Apps and games > New product > MSIX or PWA app.
+  2. Name: Convert to Markdown (or another name if it is taken) > Reserve product name.
+
+D. PUT YOUR IDENTITY INTO THE BUILD
+  1. In Partner Center: your app > Product management > Product identity.
+  2. Open StoreIdentity.txt (in the project folder) and paste:
+       Name=           the value of Package/Identity/Name
+       Publisher=      the value of Package/Identity/Publisher   (starts with CN=)
+       PublisherName=  the value of Package/Properties/PublisherDisplayName
+  3. Save. Double-click "Build Store package.cmd".
+     Result: StorePackage\ConvertToMarkdown_2.0.0.0_x64.msix  (this is what you upload)
+
+E. SUBMIT
+  Partner Center > your app > Start your submission:
+  1. Pricing and availability: Free, all markets (or the ones you want).
+  2. Properties: Category "Productivity".
+     Privacy policy URL: https://yazeedalsuayr.github.io/convert-to-markdown/
+     (put it online first - see G below).
+     Support contact: yazeed.alsueer@gmail.com
+  3. Age ratings: fill the questionnaire (no violence, no user chat, etc.).
+  4. Packages: drag in the .msix from step D.
+  5. Store listings > English: description, at least one screenshot (1366x768 or larger),
+     for example the welcome screen and a converted .md file.
+  6. Submission options > "Why does your app need the runFullTrust capability?":
+       "Convert to Markdown is a desktop (WPF) app. It adds an entry to the File Explorer
+        right-click menu and runs a bundled local AI engine (llama.cpp) to read text in pictures.
+        AI model files are downloaded from Hugging Face only when the user chooses one; all
+        processing is on the device and no files are uploaded."
+  7. Submit to the Store. Certification usually takes 1-3 working days. You get an email.
+
+F. UPDATES LATER
+  1. Raise Version in StoreIdentity.txt (2.0.1.0, 2.1.0.0 ... the last number stays 0).
+  2. Double-click "Build Store package.cmd".
+  3. Partner Center > your app > Update > Packages: replace the .msix > Submit.
+  Windows updates everyone's copy by itself.
+
+NOTE: Microsoft signs the package with your publisher name, so people see you as the publisher
+and get no "Unknown publisher" warning. The Setup.exe from Build.cmd still works, but it keeps
+showing the warning; use the Store link to share the app.
+
+G. PRIVACY POLICY ONLINE
+  It is docs/index.html in the GitHub repository. Turn on GitHub Pages (repository Settings > Pages >
+  Source: Deploy from a branch > Branch: main, folder: /docs > Save). It is then live at:
+    https://yazeedalsuayr.github.io/convert-to-markdown/

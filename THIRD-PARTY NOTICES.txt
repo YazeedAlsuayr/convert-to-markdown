@@ -1,0 +1,12 @@
+Convert to Markdown - (c) 2026 Yazeed Alsuayr
+https://github.com/YazeedAlsuayr
+
+Convert to Markdown uses these parts made by others:
+
+- llama.cpp (the AI engine, included in the app) - MIT License - https://github.com/ggml-org/llama.cpp
+- PdfPig (reads PDF files) - Apache License 2.0 - https://github.com/UglyToad/PdfPig
+- .NET - MIT License - https://github.com/dotnet/runtime
+
+AI models (not included: downloaded from Hugging Face only when the user chooses one):
+- Qwen3-VL 4B by the Qwen team (Alibaba) - Apache License 2.0
+- Gemma 4 by Google - Gemma Terms of Use - https://ai.google.dev/gemma/terms

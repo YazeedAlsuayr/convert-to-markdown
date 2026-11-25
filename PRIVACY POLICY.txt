@@ -1,0 +1,12 @@
+Convert to Markdown - Privacy Policy
+
+Convert to Markdown converts files to Markdown entirely on your device.
+
+- Your files are never uploaded. They are read on your PC, and the .md file is saved next to the original.
+- The app collects no personal information, no usage statistics and no crash reports.
+- Internet use: only when you choose an AI model, the app downloads the model files from Hugging Face
+  (huggingface.co). Linked pictures inside Office files are downloaded only when "Describe layout and
+  pictures" is turned on. Nothing about you or your files is sent.
+- Settings and AI models are stored in the app's own folder on your PC and are deleted when you uninstall it.
+
+Contact: Yazeed Alsuayr - yazeed.alsueer@gmail.com - https://github.com/YazeedAlsuayr

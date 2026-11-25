@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- Windows 10/11 APIs (handwriting recognition, OCR, PDF rendering) come with this target -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <RollForward>Major</RollForward>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>ConvertToMarkdown</AssemblyName>
+    <RootNamespace>ConvertToMarkdown</RootNamespace>
+    <ApplicationIcon>markdown.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Product>Convert to Markdown</Product>
+    <AssemblyTitle>Convert to Markdown</AssemblyTitle>
+    <Company>Yazeed Alsuayr</Company>
+    <Authors>Yazeed Alsuayr</Authors>
+    <Copyright>© 2026 Yazeed Alsuayr</Copyright>
+    <Version>2.0.0</Version>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- reads the PDF: typed text, highlights, pen strokes, picture positions -->
+    <PackageReference Include="PdfPig" Version="0.1.9" />
+    <!-- only downloaded for its makeappx.exe and signtool.exe (used by MakeMenuPackage.ps1); not part of the app -->
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" ExcludeAssets="all" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="markdown.ico" LogicalName="markdown.ico" />
+  </ItemGroup>
+
+  <!-- the signed package for the Windows 11 right-click menu, made by MakeMenuPackage.ps1 (Build.cmd) -->
+  <!-- (not in the Microsoft Store build: there the Store package itself adds the menu entry) -->
+  <ItemGroup Condition="Exists('menu-package\ConvertToMarkdown.Menu.msix') And '$(StoreBuild)' != 'true'">
+    <EmbeddedResource Include="menu-package\ConvertToMarkdown.Menu.msix" LogicalName="menu.msix" />
+    <EmbeddedResource Include="menu-package\ConvertToMarkdown.cer" LogicalName="menu.cer" />
+  </ItemGroup>
+
+</Project>

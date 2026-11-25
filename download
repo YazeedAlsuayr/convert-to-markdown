@@ -1,0 +1,11 @@
+bin/
+obj/
+.vs/
+*.user
+App/
+menu-package/
+StoreBuild/
+StorePackage/
+engine-cache/
+*.pfx
+*.msix
