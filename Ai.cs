@@ -60,6 +60,10 @@ static class Ai
     static readonly SemaphoreSlim gate = new(1, 1);
 
     // ---------------- prompts (the ones tuned in the Python version) ----------------
+    /// <summary>Small models skip signs drawn as little icons (a plus or minus in a circle next to a word).</summary>
+    const string Symbols =
+        "Copy every mark at the start of a line exactly as drawn (-, ~, *, x, arrows). " +
+        "Signs drawn as small icons next to a word, such as a plus or minus in a circle, are written as (+) and (-) after that word.";
     public const string DescribePrompt =
         "This is one slide from a lecture. In at most 3 short lines describe only how it LOOKS: how the content is laid out " +
         "(title, columns, boxes, table, flowchart, diagram, pictures) and any coloured boxes, banners, borders or shapes " +
@@ -71,13 +75,13 @@ static class Ai
         "\"Photo of a child with swelling around the eyes\", \"Logo of a university\", \"Bar chart of GFR stages\").\n" +
         "TEXT:\n" +
         "every piece of text inside the picture exactly, in English or Arabic, in reading order, one per line, " +
-        "keeping arrows as -> and symbols as written. Copy only text you can clearly see; never add words or numbers that are not in the picture. " +
+        "keeping arrows as -> and every symbol exactly as drawn. " + Symbols + " Copy only text you can clearly see; never add words or numbers that are not in the picture. " +
         "Write [unclear] for unreadable words. If the picture has no text, write NONE after TEXT:. Plain text only.";
 
     /// <summary>Without "Describe": only the text inside the picture.</summary>
     public const string PictureTextPrompt =
         "Copy every piece of text inside this picture exactly, in English or Arabic, in reading order, one per line, " +
-        "keeping arrows as -> and symbols as written. Copy only text you can clearly see; never add words or numbers that are not in the picture. " +
+        "keeping arrows as -> and every symbol exactly as drawn. " + Symbols + " Copy only text you can clearly see; never add words or numbers that are not in the picture. " +
         "Write [unclear] for unreadable words. If the picture has no text, write exactly: NONE. Plain text only.";
 
     /// <summary>Splits an answer to <see cref="PicturePrompt"/> (or <see cref="PictureTextPrompt"/>) into description and text.</summary>
@@ -101,7 +105,7 @@ static class Ai
 
     public const string FullPrompt =
         "Transcribe ALL the text in this image exactly as written, in reading order, one line per line of the image, " +
-        "in the language it is written (English or Arabic). Keep each question and each answer option on its own line. " +
+        "in the language it is written (English or Arabic). " + Symbols + " Keep each question and each answer option on its own line. " +
         "After an answer option that is highlighted, circled, ticked or written in red, add (marked). " +
         "If a word is hard to read write [unclear]; never guess and never add text that is not in the image. Plain text only.";
 

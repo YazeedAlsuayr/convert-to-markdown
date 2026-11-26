@@ -89,12 +89,14 @@ static class Converter
 
         // first pass: the typed text of every page (also gives the lecture's own words)
         var allLines = new List<TextLine>[n + 1];
+        var heights = new double[n + 1];
         for (int i = 1; i <= n; i++)
         {
             ct.ThrowIfCancellationRequested();
-            try { allLines[i] = TextLayer.Build(doc.GetPage(i)); }
+            try { var pg = doc.GetPage(i); heights[i] = pg.Height; allLines[i] = TextLayer.Build(pg); }
             catch (Exception e) { allLines[i] = new List<TextLine>(); Log.Write($"page {i} text: {e.Message}"); }
         }
+        var repeated = RepeatedEdges(allLines, heights, n, out string headerText, out string footerText);
         var vocab = new Vocabulary(allLines.Skip(1).SelectMany(ls => ls.Select(l => l.Text)));
 
         var md = new StringBuilder();
@@ -111,6 +113,8 @@ static class Converter
               "from the lecture's own vocabulary.\n");
         if (ai) md.Append($"> The AI ran on the {Ai.Device}.\n");
         else md.Append($"> The AI was not used: {Ai.Status}.\n");
+        if (headerText != null) md.Append($"> Header on every page: {headerText}\n");
+        if (footerText != null) md.Append($"> Footer on every page: {footerText}\n");
 
         for (int i = 1; i <= n; i++)
         {
@@ -119,13 +123,20 @@ static class Converter
             progress.Report(new Step(here + "  ·  reading text", (i - 1.0) / n));
             var page = doc.GetPage(i);
             var lines = allLines[i];
-            string typed = TextLayer.PageText(lines);
-            bool picturePage = typed.Length < 60;
+            string typed = TextLayer.PageText(lines.Where(l => !repeated[i].Contains(l)).ToList());
+            typed = AddLinks(page, lines, typed, out string linkList);
             var P = new R(0, 0, page.Width, page.Height);
+            bool bigPicture = PictureRects(page, skipBanners: true).Any(r => r.Area > 0.15 * P.Area);
+            int drawings = 0;
+            try { drawings = page.ExperimentalAccess.Paths.Count; } catch { }
+            bool picturePage = typed.Length < 60 && (bigPicture || (typed.Length == 0 && drawings >= 3));
+            bool blank = typed.Length == 0 && !picturePage && page.NumberOfImages == 0 && drawings < 3;
 
             md.Append($"\n\n---\n\n## Page {i}\n");
-            if (!picturePage)
+            if (!picturePage && typed.Length > 0)
                 md.Append("\n### Typed text (exact)\n\n").Append(typed).Append('\n');
+            if (linkList.Length > 0)
+                md.Append("\n### Links\n\n").Append(linkList).Append('\n');
 
             // --- annotations ---
             var pens = new List<Note>();
@@ -230,6 +241,7 @@ static class Converter
                 if (plain > 0) marks.Add(plain == 1 ? "- 1 pen mark (line, arrow or bracket)" : $"- {plain} pen marks (lines, arrows or brackets)");
                 if (marks.Count > 0) md.Append('\n').Append(string.Join("\n", marks)).Append('\n');
             }
+            if (blank && pens.Count == 0 && notes.Count == 0) md.Append("\n*(blank page)*\n");
             Log.Write($"page {i} of {n} done");
         }
         progress.Report(new Step("Saving", 1));
@@ -291,6 +303,28 @@ static class Converter
                             Strokes = { stroke }
                         });
             }
+            else if (type is "Highlight" or "Underline" or "StrikeOut" or "Squiggly" && a.QuadPoints != null && a.QuadPoints.Count > 0)
+            {
+                // one quad per highlighted line: only the words inside each quad, joined in order
+                var parts = new List<string>();
+                foreach (var q in a.QuadPoints)
+                {
+                    var pts = q.Points;                                   // a span of 4 corners
+                    if (pts.Length < 4) continue;
+                    double qx0 = double.MaxValue, qx1 = double.MinValue, qy0 = double.MaxValue, qy1 = double.MinValue;
+                    foreach (var pt in pts)
+                    {
+                        qx0 = Math.Min(qx0, pt.X); qx1 = Math.Max(qx1, pt.X);
+                        qy0 = Math.Min(qy0, pt.Y); qy1 = Math.Max(qy1, pt.Y);
+                    }
+                    var box = new R(qx0, H - qy1, qx1, H - qy0);
+                    double hgt = box.H;
+                    string t = TextLayer.WordsIn(lines, new R(box.X0, box.Y0 + 0.2 * hgt, box.X1, box.Y1 - 0.2 * hgt), limit: 4000);
+                    if (t.Length > 0 && (parts.Count == 0 || parts[^1] != t)) parts.Add(t);
+                }
+                if (parts.Count > 0) notes.Add($"- {type.ToLowerInvariant()}: \"{string.Join(" ", parts)}\"");
+                else shapes.Add((type, rect));
+            }
             else if (type is "Highlight" or "Underline" or "StrikeOut" or "Squiggly" or "Square" or "Circle" or "Line")
                 shapes.Add((type, rect));
             else if (type is "FreeText" or "Text")
@@ -309,6 +343,74 @@ static class Converter
             string t = TextLayer.WordsIn(lines, box);
             if (t.Length > 0) notes.Add($"- highlighted: \"{t}\"");
         }
+    }
+
+    /// <summary>
+    /// Lines at the very top or bottom of the page that repeat on most pages (a running title, "© 2026 …", page numbers).
+    /// They are left out of each page and shown once at the start.
+    /// </summary>
+    static HashSet<TextLine>[] RepeatedEdges(List<TextLine>[] all, double[] heights, int n, out string header, out string footer)
+    {
+        header = footer = null;
+        var result = new HashSet<TextLine>[n + 1];
+        for (int i = 0; i <= n; i++) result[i] = new HashSet<TextLine>();
+        static string Key(string t) => Regex.Replace(t.Trim().ToLowerInvariant(), @"\d+", "#");
+        var pagesWith = new Dictionary<string, HashSet<int>>();
+        var example = new Dictionary<string, (string text, bool top)>();
+        for (int i = 1; i <= n; i++)
+        {
+            if (all[i] == null || heights[i] <= 0) continue;
+            foreach (var l in all[i])
+            {
+                bool top = l.Box.Y1 < 0.09 * heights[i], bottom = l.Box.Y0 > 0.91 * heights[i];
+                if (!top && !bottom) continue;
+                string k = (top ? "T:" : "B:") + Key(l.Text);
+                if (!pagesWith.TryGetValue(k, out var set)) pagesWith[k] = set = new HashSet<int>();
+                set.Add(i);
+                if (!example.ContainsKey(k)) example[k] = (l.Text.Trim(), top);
+            }
+        }
+        var keys = pagesWith.Where(kv => kv.Value.Count >= 3 && kv.Value.Count >= 0.5 * n).Select(kv => kv.Key).ToHashSet();
+        if (keys.Count == 0) return result;
+        for (int i = 1; i <= n; i++)
+            if (all[i] != null && heights[i] > 0)
+                foreach (var l in all[i])
+                {
+                    bool top = l.Box.Y1 < 0.09 * heights[i], bottom = l.Box.Y0 > 0.91 * heights[i];
+                    if ((top || bottom) && keys.Contains((top ? "T:" : "B:") + Key(l.Text))) result[i].Add(l);
+                }
+        bool PageNumber(string t) => Regex.IsMatch(t, @"^(page\s*)?#(\s*(of|/)\s*#)?$|^-\s*#\s*-$", RegexOptions.IgnoreCase);
+        var shown = keys.Where(k => !PageNumber(k.Substring(2))).Select(k => example[k]).ToList();
+        if (shown.Any(e => e.top)) header = string.Join(" · ", shown.Where(e => e.top).Select(e => e.text));
+        if (shown.Any(e => !e.top)) footer = string.Join(" · ", shown.Where(e => !e.top).Select(e => e.text));
+        return result;
+    }
+
+    /// <summary>Web links on the page: written as [text](address) in the typed text, or listed when the text is not found.</summary>
+    static string AddLinks(Page page, List<TextLine> lines, string typed, out string list)
+    {
+        list = "";
+        IReadOnlyList<Hyperlink> links;
+        try { links = page.GetHyperlinks(); }
+        catch { return typed; }
+        if (links == null || links.Count == 0) return typed;
+        double H = page.Height;
+        var extra = new List<string>();
+        foreach (var h in links)
+        {
+            if (string.IsNullOrWhiteSpace(h.Uri)) continue;
+            var b = h.Bounds;
+            var box = new R(Math.Min(b.Left, b.Right), H - Math.Max(b.Top, b.Bottom), Math.Max(b.Left, b.Right), H - Math.Min(b.Top, b.Bottom));
+            string text = TextLayer.WordsIn(lines, box, limit: 300).Replace(" / ", " ").Trim();
+            if (text.Length == 0) continue;
+            string md = $"[{text}]({h.Uri.Trim()})";
+            int at = typed.IndexOf(text, StringComparison.Ordinal);
+            if (at >= 0 && typed.IndexOf(text, at + 1, StringComparison.Ordinal) < 0 && !typed.Contains(md))
+                typed = typed.Substring(0, at) + md + typed.Substring(at + text.Length);
+            else if (!typed.Contains(md)) extra.Add("- " + md);
+        }
+        list = string.Join("\n", extra.Distinct());
+        return typed;
     }
 
     static Note ReadInk(PigDocument doc, IReadOnlyDictionary<string, IToken> d, double H)

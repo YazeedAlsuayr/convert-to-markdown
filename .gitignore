@@ -9,3 +9,5 @@ StorePackage/
 engine-cache/
 *.pfx
 *.msix
+test-build.log
+test-run.log
