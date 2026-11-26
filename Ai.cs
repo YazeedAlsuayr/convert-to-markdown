@@ -65,14 +65,14 @@ static class Ai
         "Copy every mark at the start of a line exactly as drawn (-, ~, *, x, arrows). " +
         "Signs drawn as small icons next to a word, such as a plus or minus in a circle, are written as (+) and (-) after that word.";
     public const string DescribePrompt =
-        "This is one slide from a lecture. In at most 3 short lines describe only how it LOOKS: how the content is laid out " +
+        "This is one page of a document. In at most 3 short lines describe only how it LOOKS: how the content is laid out " +
         "(title, columns, boxes, table, flowchart, diagram, pictures) and any coloured boxes, banners, borders or shapes " +
-        "and what they surround. Do not copy the slide's text and do not mention handwriting. Plain text only.";
+        "and what they surround. Do not copy the page's text and do not mention handwriting. Plain text only.";
     /// <summary>With "Describe" ticked: what the picture shows, then its text.</summary>
     public const string PicturePrompt =
-        "This picture comes from a medical lecture slide. Answer in exactly this format:\n" +
-        "DESCRIPTION: what the picture shows, in 1 to 3 short lines (for example: \"Diagram of the nephron with arrows showing filtration\", " +
-        "\"Photo of a child with swelling around the eyes\", \"Logo of a university\", \"Bar chart of GFR stages\").\n" +
+        "This picture comes from a document. Answer in exactly this format:\n" +
+        "DESCRIPTION: what the picture shows, in 1 to 3 short lines (for example: \"Flowchart of the steps of an order\", " +
+        "\"Photo of a building at night\", \"Logo of a company\", \"Bar chart of sales by month\").\n" +
         "TEXT:\n" +
         "every piece of text inside the picture exactly, in English or Arabic, in reading order, one per line, " +
         "keeping arrows as -> and every symbol exactly as drawn. " + Symbols + " Copy only text you can clearly see; never add words or numbers that are not in the picture. " +
@@ -316,7 +316,7 @@ static class Ai
         foreach (Match m in Regex.Matches(s, @"(.{1,30}?)(?:[\s,;.]*\1){7,}", RegexOptions.Singleline))
         {
             if (!Regex.IsMatch(m.Groups[1].Value, @"[0-9A-Za-z\u0600-\u06FF]")) continue;   // dotted or dashed lines are fine
-            return s[..m.Index] + m.Groups[1].Value + " [model got stuck repeating - check the slide]";
+            return s[..m.Index] + m.Groups[1].Value + " [model got stuck repeating - check the page]";
         }
         return s;
     }

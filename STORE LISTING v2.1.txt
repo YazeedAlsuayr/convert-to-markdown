@@ -1,0 +1,73 @@
+STORE LISTING TEXT FOR VERSION 2.1
+Paste these into Partner Center when you submit 2.1:
+Apps and games > Convert to Markdown > the new submission > Store listings > English.
+Also in that submission: Properties > Privacy policy URL =
+https://yazeedalsuayr.github.io/convert-to-markdown/
+
+"What's new" lists only what is finished so far (stages 1 and 2). Update it before you submit.
+
+
+==================== DESCRIPTION ====================
+
+Convert to Markdown turns your documents into clean, editable Markdown text, right on your PC.
+
+Right-click a PDF, Word, PowerPoint or Excel file, a scan or a picture, choose Convert to Markdown, and a .md file appears next to it. Markdown is plain text that keeps headings, lists, tables and links, so it opens in any note app or text editor and works well with AI tools, wikis and search.
+
+Private by design
+Everything runs on your computer. Your files are never uploaded, and there are no accounts, ads or tracking.
+
+What it reads
+- Typed text in the right reading order: headings, columns, lists, tables, footnotes and links
+- Highlights and pen notes you added to a PDF
+- Text inside pictures, screenshots, scans, charts and forms, including ticked or circled answers
+- English and Arabic, including right-to-left text
+- Headers and footers that repeat on every page are written once, and blank pages are marked
+
+Built-in offline AI (optional)
+Choose an AI model on first start. It is downloaded once and then works without the internet, on your graphics card. It reads the text in pictures and handwriting and can describe each page's layout. You can also skip the AI: Windows then reads pictures and handwriting itself.
+
+Made for
+Students and teachers, office and research work, and anyone who wants the content of their files as text they can search, edit, summarize or reuse.
+
+Supported files: PDF, DOCX, DOCM, PPTX, PPTM, XLSX, XLSM, PNG, JPG, BMP, TIF, GIF.
+
+Free and open source (MIT License).
+
+
+==================== SHORT DESCRIPTION ====================
+
+Turn PDFs, Word, PowerPoint and Excel files, scans and pictures into clean Markdown text. Right-click a file, and a .md file appears next to it. Runs offline on your PC; your files are never uploaded.
+
+
+==================== FEATURES (one per box) ====================
+
+Right-click any supported file and choose Convert to Markdown
+PDF, Word, PowerPoint, Excel, scans and pictures
+Keeps headings, columns, lists, tables and links in reading order
+Reads highlights and handwritten pen notes on PDFs
+Reads text inside pictures, screenshots, charts and scans
+English and Arabic, including right-to-left text
+Optional built-in AI that works offline on your graphics card
+Your files never leave your PC: no uploads, no accounts, no tracking
+Free and open source
+
+
+==================== WHAT'S NEW IN 2.1 ====================
+
+- Much better PDF layout: columns in the right order, real tables, nested and numbered lists, superscripts, footnotes and links
+- Headers and footers that repeat on every page are written once; blank pages are marked
+- Highlights are now exact, word for word
+- Handwritten notes are now read by the built-in AI, which is far more accurate
+- Symbols in pictures (arrows, plus and minus signs, bullets) are copied as drawn
+- Arabic lists and percentages are written correctly
+
+
+==================== SEARCH TERMS (up to 7) ====================
+
+markdown
+pdf to markdown
+convert to text
+ocr
+handwriting
+document converter
+arabic ocr

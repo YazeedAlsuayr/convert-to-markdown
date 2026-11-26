@@ -84,7 +84,7 @@ class SetupWindow : Window
         RenderOptions.SetBitmapScalingMode(logo, BitmapScalingMode.HighQuality);
         page.Children.Add(logo);
         page.Children.Add(Heading("Convert to Markdown"));
-        page.Children.Add(Paragraph("Turns lecture PDFs, Word, PowerPoint, Excel files and pictures into Markdown: typed text, highlights, " +
+        page.Children.Add(Paragraph("Turns PDFs, Word, PowerPoint, Excel files and pictures into Markdown: typed text, tables, highlights, " +
                                     "your handwritten notes, and the text inside pictures and screenshots."));
         page.Children.Add(Paragraph("Everything runs on this PC. Your files are never uploaded."));
         if (firstRun) { }
@@ -101,14 +101,14 @@ class SetupWindow : Window
     {
         Clear();
         page.Children.Add(Heading("Choose the AI"));
-        page.Children.Add(Paragraph("The AI reads the text in pictures and screenshots, and can describe slides. " +
+        page.Children.Add(Paragraph("The AI reads the text in pictures, screenshots and handwriting, and can describe pages. " +
                                     "It runs on your graphics card, offline, and is downloaded once. You can change this later in Settings."));
         page.Children.Add(ModelCard("qwen", "Qwen3-VL 4B", new[] { ("Recommended", Accent), ("Faster", Green) },
-            "About 3 GB. Best at copying text exactly, including Arabic and MCQ screenshots."));
+            "About 3 GB. Best at copying text exactly, including Arabic and screenshots."));
         page.Children.Add(ModelCard("gemma", "Gemma 4", new[] { ("Slower", Orange) },
-            "About 5.2 GB. Writes longer descriptions; good at spotting the marked answer in MCQs."));
+            "About 5.2 GB. Writes longer descriptions; good at spotting ticked or circled answers."));
         page.Children.Add(ModelCard("none", "No AI", new[] { ("Fastest", Green) },
-            "Nothing to download. Windows OCR reads the text in pictures (less accurate). Handwriting and typed text work the same."));
+            "Nothing to download. Windows reads the text in pictures and handwriting (less accurate). Typed text works the same."));
         if (model != "none")
             page.Children.Add(Tick("Describe layout and pictures",
                 "Adds a Description section to each page: how it is laid out and what each picture shows. About twice as slow.",

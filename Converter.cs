@@ -89,7 +89,7 @@ static class Converter
         using var doc = PigDocument.Open(path);
         int n = doc.NumberOfPages;
 
-        // first pass: the typed text of every page (also gives the lecture's own words)
+        // first pass: the typed text of every page (also gives the document's own words)
         var allLines = new List<TextLine>[n + 1];
         var heights = new double[n + 1];
         for (int i = 1; i <= n; i++)
@@ -109,10 +109,10 @@ static class Converter
             ? "> Typed text and highlights come from the PDF itself (exact). " +
               (Settings.Describe ? "Descriptions and the text in pictures are written" : "The text in pictures is read") +
               $" by the built-in AI ({Ai.ModelName}), and so is handwriting; these CAN contain errors. " +
-              "'possible' words are guesses from the lecture's own vocabulary.\n"
+              "'possible' words are spelling guesses from the document's own words.\n"
             : "> Typed text and highlights come from the PDF itself (exact). Handwriting is read by Windows handwriting " +
               "recognition and picture text by Windows OCR, and CAN contain errors. 'possible' words are guesses " +
-              "from the lecture's own vocabulary.\n");
+              "from the document's own words.\n");
         if (ai) md.Append($"> The AI ran on the {Ai.Device}.\n");
         else md.Append($"> The AI was not used: {Ai.Status}.\n");
         if (headerText != null) md.Append($"> Header on every page: {headerText}\n");
@@ -551,7 +551,7 @@ static class Converter
                 var cands = r.GetTextCandidates();
                 if (cands.Count == 0) continue;
                 string pick = cands[0];
-                // the recognizer's own second guesses: prefer one that is a word from the lecture or medicine
+                // the recognizer's own second guesses: prefer one that is a word from the document or the word list
                 if (!vocab.Knows(pick) && !IsAbbreviation(pick))
                     pick = cands.Skip(1).FirstOrDefault(c => Vocabulary.Key(c).Length >= 4 && vocab.Knows(c)) ?? pick;
                 words.Add(pick);
@@ -570,16 +570,16 @@ static class Converter
     const int NotesPerPicture = 8;
 
     static string NotesPrompt(int count) =>
-        $"This picture shows {count} separate pieces of handwriting from a medical student's notes, one under the other. " +
+        $"This picture shows {count} separate pieces of handwriting, one under the other. " +
         $"Copy each one exactly as written, in English or Arabic, one answer line per piece, top to bottom: exactly {count} lines. " +
-        "Medical words and abbreviations are common (for example HTN, GFR, Na, ECG). Write arrows as →. " +
+        "Abbreviations and short notes are common. Write arrows as →. " +
         "If a piece has no letters or numbers (only a line, arrow, tick, bracket or circle), write NONE for it. " +
         "Copy the letters you actually see, even when the spelling looks wrong; never replace a word with a different word. " +
         "Never add words that are not written. Plain text only, no numbering.";
 
     const string NotePrompt =
-        "This picture shows handwriting from a medical student's notes, in English or Arabic. Copy it exactly as written, " +
-        "on one line. Medical words and abbreviations are common (for example HTN, GFR, Na, ECG). Write arrows as →. " +
+        "This picture shows handwriting, in English or Arabic. Copy it exactly as written, " +
+        "on one line. Abbreviations and short notes are common. Write arrows as →. " +
         "If it has no letters or numbers (only a line, arrow, tick, bracket or circle), write exactly: NONE. " +
         "Copy the letters you actually see, even when the spelling looks wrong; never replace a word with a different word. " +
         "Never add words that are not written. Plain text only.";

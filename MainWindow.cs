@@ -331,7 +331,7 @@ class MainWindow : Window
         if (done.Count == 1 && done[0] == "AI")
         {
             title.Text = failed.Count > 0 ? title.Text : "The AI is ready";
-            file.Text = $"Pictures and slide layouts will now be described by {Ai.ModelName}.";
+            file.Text = $"Pictures, handwriting and page layouts will now be read by {Ai.ModelName}.";
         }
         else if (done.Count == 1)
         {
