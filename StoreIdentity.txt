@@ -1,7 +1,6 @@
 # Fill these in from Partner Center: Apps and games > Convert to Markdown > Product management > Product identity.
 # Copy each value exactly (they are case-sensitive). Then run "Build Store package.cmd".
-Name=PASTE Package/Identity/Name HERE
-Publisher=PASTE Package/Identity/Publisher HERE
-PublisherName=PASTE Package/Properties/PublisherDisplayName HERE
-# Raise this for every new upload (the last number must stay 0)
+Name=YazeedAlsuayr.ConverttoMarkdown
+Publisher=CN=C919B301-E998-4955-B8B5-C1FBD6C9758D
+PublisherName=Yazeed Alsuayr
 Version=2.0.0.0

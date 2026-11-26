@@ -27,7 +27,7 @@ Runs [llama.cpp](https://github.com/ggml-org/llama.cpp) on your graphics card. Y
 
 ## Install
 
-- **Microsoft Store:** (https://apps.microsoft.com/detail/9PGF0LSJNXQ4.)
+- **Microsoft Store:** coming soon
 - **From source:** install the [.NET 8 SDK](https://dotnet.microsoft.com/download), then double-click `Build.cmd`.
   It makes `App\Convert to Markdown Setup.exe`.
 
