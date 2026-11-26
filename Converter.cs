@@ -1,8 +1,10 @@
 // PDF (and picture) -> Markdown, using only what is built into Windows:
 //   typed text, highlights   - read straight from the PDF (exact)
-//   handwriting              - Windows handwriting recognition, from the pen strokes stored in the PDF
+//   handwriting              - the built-in AI reads a clean picture of the pen strokes stored in the PDF
+//                              (Windows handwriting recognition when the AI is off)
 //   text inside pictures     - Windows OCR (English and Arabic)
 
+using System.IO.Compression;
 using System.Numerics;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -106,7 +108,7 @@ static class Converter
         md.Append(ai
             ? "> Typed text and highlights come from the PDF itself (exact). " +
               (Settings.Describe ? "Descriptions and the text in pictures are written" : "The text in pictures is read") +
-              $" by the built-in AI ({Ai.ModelName}) and handwriting by Windows handwriting recognition; these CAN contain errors. " +
+              $" by the built-in AI ({Ai.ModelName}), and so is handwriting; these CAN contain errors. " +
               "'possible' words are guesses from the lecture's own vocabulary.\n"
             : "> Typed text and highlights come from the PDF itself (exact). Handwriting is read by Windows handwriting " +
               "recognition and picture text by Windows OCR, and CAN contain errors. 'possible' words are guesses " +
@@ -206,15 +208,16 @@ static class Converter
             {
                 var (writing, lineMarks) = SplitMarks(pens);
                 var notesOnPage = Cluster(writing);
+                progress.Report(new Step($"{here}  ·  reading handwriting", (i - 0.4) / n));
+                var read = await ReadHandwritingAsync(notesOnPage, vocab, ct);
                 md.Append("\n### Handwriting (pen) - verify\n");
                 bool wroteNote = false;
                 var marks = new List<string>();
                 for (int k = 0; k < notesOnPage.Count; k++)
                 {
                     ct.ThrowIfCancellationRequested();
-                    progress.Report(new Step($"{here}  ·  reading handwriting {k + 1} of {notesOnPage.Count}", (i - 0.4 + 0.4 * k / notesOnPage.Count) / n));
                     var note = notesOnPage[k];
-                    string text = await RecognizeInkAsync(note, vocab);
+                    string text = read[k];
                     if (IsMark(text, note.Box))
                     {
                         string on = TextLayer.WordsIn(lines, note.Box);
@@ -454,6 +457,7 @@ static class Converter
             for (int i = 1; i < s.Count; i++) length += Vector2.Distance(s[i - 1], s[i]);
             double diag = Math.Sqrt(n.Box.W * n.Box.W + n.Box.H * n.Box.H);
             if (n.Box.H > 3.5 * q75) tall.Add(n);
+            else if (n.Box.H > 3 * n.Box.W && n.Box.H < 3.2 * q75) continue;    // an upright l, I, 1 or | is a letter
             else if (diag > 0 && length < 1.3 * diag && diag > 2.2 * q75) straight.Add(n);
         }
         var letters = strokes.Where(n => !tall.Contains(n) && !straight.Contains(n)).ToList();
@@ -481,7 +485,12 @@ static class Converter
         double ov = Math.Min(a.Y1, b.Y1) - Math.Max(a.Y0, b.Y0);
         double h = Math.Min(a.H, b.H);
         if (gx == 0 && h > 0 && ov >= 0.5 * h) return true;
-        return gx <= GapX && h > 0 && ov >= RowOverlap * h;
+        if (gx <= GapX && h > 0 && ov >= RowOverlap * h) return true;
+        // the tail of a g or y, the dot of an i, an accent: a smaller stroke just under or over a word
+        var (big, small) = a.H >= b.H ? (a, b) : (b, a);
+        double cx = (small.X0 + small.X1) / 2;
+        double gy = Math.Max(small.Y0 - big.Y1, big.Y0 - small.Y1);
+        return small.H < 0.7 * big.H && small.W < 0.8 * big.H && cx > big.X0 && cx < big.X1 && gy < 0.15 * big.H;
     }
 
     static List<Note> Cluster(List<Note> notes)
@@ -555,6 +564,189 @@ static class Converter
             Log.Write("handwriting: " + e);
             return "(could not read this note)";
         }
+    }
+
+    // ---------------- handwriting read by the AI ----------------
+    const int NotesPerPicture = 8;
+
+    static string NotesPrompt(int count) =>
+        $"This picture shows {count} separate pieces of handwriting from a medical student's notes, one under the other. " +
+        $"Copy each one exactly as written, in English or Arabic, one answer line per piece, top to bottom: exactly {count} lines. " +
+        "Medical words and abbreviations are common (for example HTN, GFR, Na, ECG). Write arrows as →. " +
+        "If a piece has no letters or numbers (only a line, arrow, tick, bracket or circle), write NONE for it. " +
+        "Copy the letters you actually see, even when the spelling looks wrong; never replace a word with a different word. " +
+        "Never add words that are not written. Plain text only, no numbering.";
+
+    const string NotePrompt =
+        "This picture shows handwriting from a medical student's notes, in English or Arabic. Copy it exactly as written, " +
+        "on one line. Medical words and abbreviations are common (for example HTN, GFR, Na, ECG). Write arrows as →. " +
+        "If it has no letters or numbers (only a line, arrow, tick, bracket or circle), write exactly: NONE. " +
+        "Copy the letters you actually see, even when the spelling looks wrong; never replace a word with a different word. " +
+        "Never add words that are not written. Plain text only.";
+
+    /// <summary>
+    /// The text of every pen note on a page. The strokes are drawn black on white and read by the built-in AI,
+    /// a few notes per picture (one under the other); if the AI's answer does not have one line per note, each note
+    /// is asked about on its own. Windows handwriting recognition is used when the AI is off or fails.
+    /// </summary>
+    static async Task<List<string>> ReadHandwritingAsync(List<Note> notes, Vocabulary vocab, CancellationToken ct)
+    {
+        var result = new string[notes.Count];
+        bool ai = false;
+        try { ai = Ai.Enabled && await Ai.EnsureRunningAsync(null, ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch { }
+        if (ai)
+        {
+            try
+            {
+                // one or two strokes that Windows sees as a line, arrow or tick are not worth asking the AI about
+                var ask = new List<int>();
+                for (int k = 0; k < notes.Count; k++)
+                {
+                    if (notes[k].Strokes.Count <= 2 && Engines.InkAvailable && IsMark(await RecognizeInkAsync(notes[k], vocab), notes[k].Box))
+                        result[k] = "";
+                    else ask.Add(k);
+                }
+                for (int start = 0; start < ask.Count; start += NotesPerPicture)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var idx = ask.Skip(start).Take(NotesPerPicture).ToList();
+                    var chunk = idx.Select(k => notes[k]).ToList();
+                    List<string> lines = null;
+                    if (chunk.Count > 1)
+                    {
+                        string answer = await Ai.AskAsync(NotesPrompt(chunk.Count), InkPng(chunk), 40 + 40 * chunk.Count, false, ct);
+                        lines = answer.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+                        for (int k = 0; k < lines.Count; k++)
+                            lines[k] = Regex.Replace(lines[k], $@"^{k + 1}[.)]\s+", "");
+                        if (lines.Count != chunk.Count) { Log.Write($"handwriting: {lines.Count} lines for {chunk.Count} notes, asking one by one"); lines = null; }
+                    }
+                    if (lines == null)
+                    {
+                        lines = new List<string>();
+                        foreach (var note in chunk)
+                            lines.Add(await Ai.AskAsync(NotePrompt, InkPng(new List<Note> { note }), 60, true, ct));
+                    }
+                    for (int k = 0; k < chunk.Count; k++)
+                        result[idx[k]] = Regex.IsMatch(lines[k], @"^\W*NONE\W*$", RegexOptions.IgnoreCase) ? "" : lines[k];
+                }
+                return result.ToList();
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception e) { Log.Write("handwriting AI: " + e.Message + " - using Windows handwriting recognition"); }
+        }
+        for (int k = 0; k < notes.Count; k++)
+            result[k] ??= await RecognizeInkAsync(notes[k], vocab);
+        return result.ToList();
+    }
+
+    /// <summary>Pen notes drawn black on white, one under the other, each scaled to about the same writing height.</summary>
+    static byte[] InkPng(List<Note> notes)
+    {
+        const double lineHeight = 56, maxWidth = 1300;
+        const int pad = 24, gap = 44;
+        var scales = notes.Select(n =>
+        {
+            // a note of several lines: scale by the height of one line of writing, not the whole note
+            var hs = n.Strokes.Select(st => st.Max(v => v.Y) - st.Min(v => v.Y)).OrderBy(x => x).ToList();
+            double row = Math.Min(n.Box.H, 2.5 * Math.Max(hs[hs.Count / 2], 2));
+            double sc = Math.Clamp(lineHeight / Math.Max(row, 4), 1.5, 6);
+            return Math.Min(sc, maxWidth / Math.Max(n.Box.W, 1));
+        }).ToList();
+        int width = (int)Math.Ceiling(notes.Select((n, k) => n.Box.W * scales[k]).Max()) + 2 * pad;
+        int height = (int)Math.Ceiling(notes.Select((n, k) => n.Box.H * scales[k]).Sum()) + gap * (notes.Count - 1) + 2 * pad;
+        width = Math.Max(width, 64); height = Math.Max(height, 64);
+        var px = new byte[width * height];
+        Array.Fill(px, (byte)255);
+
+        double top = pad;
+        for (int k = 0; k < notes.Count; k++)
+        {
+            var n = notes[k];
+            double sc = scales[k];
+            double r = Math.Clamp(0.45 * sc, 1.6, 3.2);                  // pen radius in pixels
+            foreach (var s in n.Strokes)
+            {
+                Vector2 P(Vector2 v) => new((float)(pad + (v.X - n.Box.X0) * sc), (float)(top + (v.Y - n.Box.Y0) * sc));
+                if (s.Count == 1) { Dot(px, width, height, P(s[0]), r); continue; }
+                for (int i = 1; i < s.Count; i++)
+                {
+                    Vector2 a = P(s[i - 1]), b = P(s[i]);
+                    int steps = (int)Math.Ceiling(Vector2.Distance(a, b) / 0.7) + 1;
+                    for (int t = 0; t <= steps; t++) Dot(px, width, height, Vector2.Lerp(a, b, (float)t / steps), r);
+                }
+            }
+            top += n.Box.H * sc + gap;
+        }
+        return GrayPng(px, width, height);
+    }
+
+    static void Dot(byte[] px, int w, int h, Vector2 c, double r)
+    {
+        int x0 = Math.Max(0, (int)(c.X - r - 1)), x1 = Math.Min(w - 1, (int)(c.X + r + 1));
+        int y0 = Math.Max(0, (int)(c.Y - r - 1)), y1 = Math.Min(h - 1, (int)(c.Y + r + 1));
+        for (int y = y0; y <= y1; y++)
+            for (int x = x0; x <= x1; x++)
+            {
+                double d = Math.Sqrt((x + 0.5 - c.X) * (x + 0.5 - c.X) + (y + 0.5 - c.Y) * (y + 0.5 - c.Y));
+                double ink = Math.Clamp(r + 0.5 - d, 0, 1);                 // soft edge
+                byte v = (byte)(255 * (1 - ink));
+                if (v < px[y * w + x]) px[y * w + x] = v;
+            }
+    }
+
+    /// <summary>A grayscale PNG, written directly (no drawing library needed).</summary>
+    static byte[] GrayPng(byte[] px, int w, int h)
+    {
+        var raw = new byte[h * (w + 1)];
+        for (int y = 0; y < h; y++) System.Buffer.BlockCopy(px, y * w, raw, y * (w + 1) + 1, w);   // filter byte 0 per row
+        byte[] data;
+        using (var z = new MemoryStream())
+        {
+            using (var zs = new ZLibStream(z, CompressionLevel.Fastest, leaveOpen: true)) zs.Write(raw, 0, raw.Length);
+            data = z.ToArray();
+        }
+        using var ms = new MemoryStream();
+        ms.Write(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
+        var ihdr = new byte[13];
+        BE(ihdr, 0, (uint)w); BE(ihdr, 4, (uint)h);
+        ihdr[8] = 8; ihdr[9] = 0; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;   // 8-bit grayscale
+        Chunk(ms, "IHDR", ihdr);
+        Chunk(ms, "IDAT", data);
+        Chunk(ms, "IEND", Array.Empty<byte>());
+        return ms.ToArray();
+    }
+
+    static void BE(byte[] b, int at, uint v) { b[at] = (byte)(v >> 24); b[at + 1] = (byte)(v >> 16); b[at + 2] = (byte)(v >> 8); b[at + 3] = (byte)v; }
+
+    static void Chunk(Stream s, string type, byte[] data)
+    {
+        var len = new byte[4]; BE(len, 0, (uint)data.Length); s.Write(len);
+        var body = new byte[4 + data.Length];
+        Encoding.ASCII.GetBytes(type).CopyTo(body, 0);
+        data.CopyTo(body, 4);
+        s.Write(body);
+        var crc = new byte[4]; BE(crc, 0, Crc32(body)); s.Write(crc);
+    }
+
+    static uint[] crcTable;
+    static uint Crc32(byte[] data)
+    {
+        if (crcTable == null)
+        {
+            var t = new uint[256];
+            for (uint n = 0; n < 256; n++)
+            {
+                uint c = n;
+                for (int k = 0; k < 8; k++) c = (c & 1) != 0 ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+                t[n] = c;
+            }
+            crcTable = t;
+        }
+        uint crc = 0xFFFFFFFFu;
+        foreach (byte b in data) crc = crcTable[(crc ^ b) & 0xFF] ^ (crc >> 8);
+        return crc ^ 0xFFFFFFFFu;
     }
 
     static bool IsAbbreviation(string w) => w.Length <= 5 && w.Any(char.IsLetter) && w.Where(char.IsLetter).All(char.IsUpper);
