@@ -108,7 +108,7 @@ class SetupWindow : Window
         page.Children.Add(ModelCard("gemma", "Gemma 4", new[] { ("Slower", Orange) },
             "About 5.2 GB. Writes longer descriptions; good at spotting ticked or circled answers."));
         page.Children.Add(ModelCard("none", "No AI", new[] { ("Fastest", Green) },
-            "Nothing to download. Windows reads the text in pictures and handwriting (less accurate). Typed text works the same."));
+            "Nothing to download. A quick built-in reader reads the text in pictures and handwriting (less accurate). Typed text works the same."));
         if (model != "none")
             page.Children.Add(Tick("Describe layout and pictures",
                 "Adds a Description section to each page: how it is laid out and what each picture shows. About twice as slow.",

@@ -13,7 +13,7 @@ or anyone feeding documents to AI tools, note apps (Obsidian, Notion) or a searc
 ## What it reads
 
 - **Typed text** in reading order: headings, columns, lists, tables, footnotes, links and highlights
-- **Handwritten pen notes** on PDFs, read by the built-in AI (or Windows handwriting recognition)
+- **Handwritten pen notes** on PDFs, read by the built-in AI (or a quick built-in reader)
 - **Text in pictures, screenshots and scans**, including charts, tables and forms with ticked or circled answers
 - **Optional:** a short description of each page's layout and pictures
 - Headers and footers repeated on every page are shown once; blank pages are marked
@@ -29,7 +29,7 @@ Runs [llama.cpp](https://github.com/ggml-org/llama.cpp) on your graphics card. Y
 |---|---|---|
 | Qwen3-VL 4B | about 3 GB | Recommended: faster, best at copying text exactly |
 | Gemma 4 | about 5.2 GB | Slower, longer descriptions |
-| No AI | nothing | Fastest; Windows reads pictures and handwriting (less accurate) |
+| No AI | nothing | Fastest; a quick built-in reader reads pictures and handwriting (less accurate) |
 
 ## Install
 

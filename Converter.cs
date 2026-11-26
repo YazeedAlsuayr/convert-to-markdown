@@ -47,6 +47,14 @@ static class Converter
     {
         if (!File.Exists(path)) throw new FileNotFoundException("The file was not found.");
         string ext = Path.GetExtension(path).ToLowerInvariant();
+        // start the AI now, while the typed text is read, instead of when the first picture needs it (saves ~4 s);
+        // Office files without any pictures don't need it at all
+        if (Ai.Enabled && (ext == ".pdf" || ImageTypes.Contains(ext) || (OfficeConverter.Types.Contains(ext) && OfficeConverter.HasPictures(path))))
+            _ = Task.Run(async () =>
+            {
+                try { await Ai.EnsureRunningAsync(null, ct); }
+                catch (Exception e) when (e is not OutOfMemoryException) { }   // the real call later reports any problem
+            });
         string body;
         if (ext == ".pdf") body = await PdfAsync(path, progress, ct);
         else if (ImageTypes.Contains(ext)) body = await ImageAsync(path, progress, ct);
@@ -83,6 +91,7 @@ static class Converter
     static async Task<string> PdfAsync(string path, IProgress<Step> progress, CancellationToken ct)
     {
         progress.Report(new Step("Opening the PDF", 0));
+        lock (askedBefore) askedBefore.Clear();          // remembered answers are for one file only
         var clock = System.Diagnostics.Stopwatch.StartNew();
         var storage = await StorageFile.GetFileFromPathAsync(path);
         var winDoc = await WinPdfDocument.LoadFromFileAsync(storage);
@@ -108,10 +117,12 @@ static class Converter
         md.Append(ai
             ? "> Typed text and highlights come from the PDF itself (exact). " +
               (Settings.Describe ? "Descriptions and the text in pictures are written" : "The text in pictures is read") +
-              $" by the built-in AI ({Ai.ModelName}), and so is handwriting; these CAN contain errors. " +
+              $" by the built-in AI ({Ai.ModelName}), " +
+              (Settings.HandwritingAi ? "and so is handwriting" : "handwriting by the quick built-in reader (fast mode)") +
+              "; these CAN contain errors. " +
               "'possible' words are spelling guesses from the document's own words.\n"
-            : "> Typed text and highlights come from the PDF itself (exact). Handwriting is read by Windows handwriting " +
-              "recognition and picture text by Windows OCR, and CAN contain errors. 'possible' words are guesses " +
+            : "> Typed text and highlights come from the PDF itself (exact). Handwriting and picture text are read by the quick " +
+              "built-in reader (the AI is off), and CAN contain errors. 'possible' words are guesses " +
               "from the document's own words.\n");
         if (ai) md.Append($"> The AI ran on the {Ai.Device}.\n");
         else md.Append($"> The AI was not used: {Ai.Status}.\n");
@@ -198,7 +209,7 @@ static class Converter
                     if (description.Count > 0)
                         md.Append("\n### Description (AI - verify)\n\n").Append(string.Join("\n\n", description)).Append('\n');
                     if (texts.Count > 0)
-                        md.Append(anyOcr ? "\n### Text in pictures (Windows OCR - verify)\n" : "\n### Text in pictures (AI - verify)\n")
+                        md.Append(anyOcr ? "\n### Text in pictures (quick reader - verify)\n" : "\n### Text in pictures (AI - verify)\n")
                           .Append(string.Concat(texts.Select(t => "\n" + t + "\n")));
                 }
             }
@@ -516,7 +527,7 @@ static class Converter
     // ---------------- handwriting ----------------
     static async Task<string> RecognizeInkAsync(Note note, Vocabulary vocab)
     {
-        if (!Engines.InkAvailable) return "(Windows handwriting recognition is not installed)";
+        if (!Engines.InkAvailable) return "(the quick handwriting reader is not installed in Windows)";
         try
         {
             const float scale = 3f;   // PDF points -> roughly the size of real pen writing on screen
@@ -593,7 +604,7 @@ static class Converter
     {
         var result = new string[notes.Count];
         bool ai = false;
-        try { ai = Ai.Enabled && await Ai.EnsureRunningAsync(null, ct); }
+        try { ai = Ai.Enabled && Settings.HandwritingAi && await Ai.EnsureRunningAsync(null, ct); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch { }
         if (ai)
@@ -613,21 +624,7 @@ static class Converter
                     ct.ThrowIfCancellationRequested();
                     var idx = ask.Skip(start).Take(NotesPerPicture).ToList();
                     var chunk = idx.Select(k => notes[k]).ToList();
-                    List<string> lines = null;
-                    if (chunk.Count > 1)
-                    {
-                        string answer = await Ai.AskAsync(NotesPrompt(chunk.Count), InkPng(chunk), 40 + 40 * chunk.Count, false, ct);
-                        lines = answer.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
-                        for (int k = 0; k < lines.Count; k++)
-                            lines[k] = Regex.Replace(lines[k], $@"^{k + 1}[.)]\s+", "");
-                        if (lines.Count != chunk.Count) { Log.Write($"handwriting: {lines.Count} lines for {chunk.Count} notes, asking one by one"); lines = null; }
-                    }
-                    if (lines == null)
-                    {
-                        lines = new List<string>();
-                        foreach (var note in chunk)
-                            lines.Add(await Ai.AskAsync(NotePrompt, InkPng(new List<Note> { note }), 60, true, ct));
-                    }
+                    var lines = await ReadNotesAsync(chunk, ct);
                     for (int k = 0; k < chunk.Count; k++)
                         result[idx[k]] = Regex.IsMatch(lines[k], @"^\W*NONE\W*$", RegexOptions.IgnoreCase) ? "" : lines[k];
                 }
@@ -639,6 +636,28 @@ static class Converter
         for (int k = 0; k < notes.Count; k++)
             result[k] ??= await RecognizeInkAsync(notes[k], vocab);
         return result.ToList();
+    }
+
+    /// <summary>
+    /// One answer line per note. Several notes go in one picture; when the AI's answer has the wrong number of
+    /// lines, the notes are split in two halves and each half is asked again (a single note is asked on its own).
+    /// That needs about 2-3 extra questions instead of one per note.
+    /// </summary>
+    static async Task<List<string>> ReadNotesAsync(List<Note> chunk, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (chunk.Count == 1)
+            return new List<string> { await Ai.AskAsync(NotePrompt, InkPng(chunk), 60, true, ct) };
+        string answer = await Ai.AskAsync(NotesPrompt(chunk.Count), InkPng(chunk), 40 + 40 * chunk.Count, false, ct);
+        var lines = answer.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+        for (int k = 0; k < lines.Count; k++)
+            lines[k] = Regex.Replace(lines[k], $@"^{k + 1}[.)]\s+", "");
+        if (lines.Count == chunk.Count) return lines;
+        Log.Write($"handwriting: {lines.Count} lines for {chunk.Count} notes, asking again in two halves");
+        int half = chunk.Count / 2;
+        var first = await ReadNotesAsync(chunk.Take(half).ToList(), ct);
+        var second = await ReadNotesAsync(chunk.Skip(half).ToList(), ct);
+        return first.Concat(second).ToList();
     }
 
     /// <summary>Pen notes drawn black on white, one under the other, each scaled to about the same writing height.</summary>
@@ -825,7 +844,7 @@ static class Converter
             // smaller pictures = much faster for the AI; screenshot pages keep more detail for small text
             int maxSide = prompt == Ai.DescribePrompt ? 768 : prompt == Ai.PicturePrompt ? 1280 : 1600;   // layout only needs a rough look
             byte[] png = await RenderPngAsync(winPage, page, rect, dpi, maxSide);
-            return await Ai.AskAsync(prompt, png, maxTokens, false, ct);
+            return await AskOnceAsync(prompt, png, maxTokens, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception e)
@@ -833,6 +852,54 @@ static class Converter
             Log.Write("AI: " + e.Message);
             return null;
         }
+    }
+
+    // answers for pictures already asked about in this file (the same logo or picture on several pages)
+    static readonly Dictionary<string, string> askedBefore = new();
+
+    /// <summary>
+    /// Asks the AI about a picture, but not twice about the exact same picture, and not at all about a picture
+    /// that is almost all one color (an empty box or a plain background has nothing to read).
+    /// </summary>
+    static async Task<string> AskOnceAsync(string prompt, byte[] png, int maxTokens, CancellationToken ct)
+    {
+        string key = prompt + "|" + maxTokens + "|" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(png));
+        lock (askedBefore) if (askedBefore.TryGetValue(key, out var known)) { Log.Write("AI: same picture as before, answer reused"); return known; }
+        string answer;
+        if (await IsPlainAsync(png)) { Log.Write("AI: empty picture skipped"); answer = ""; }
+        else answer = await Ai.AskAsync(prompt, png, maxTokens, false, ct);
+        lock (askedBefore) askedBefore[key] = answer;
+        return answer;
+    }
+
+    /// <summary>True when (almost) every pixel has the same color: nothing to read.</summary>
+    static async Task<bool> IsPlainAsync(byte[] png)
+    {
+        try
+        {
+            using var ms = new MemoryStream(png);
+            var dec = await BitmapDecoder.CreateAsync(ms.AsRandomAccessStream());
+            var tr = new BitmapTransform { ScaledWidth = Math.Min(dec.PixelWidth, 400u), ScaledHeight = (uint)Math.Max(1, dec.PixelHeight * Math.Min(dec.PixelWidth, 400u) / Math.Max(1u, dec.PixelWidth)) };
+            var data = await dec.GetPixelDataAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, tr,
+                                                   ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.DoNotColorManage);
+            byte[] px = data.DetachPixelData();
+            int n = px.Length / 4;
+            if (n == 0) return true;
+            // the most common color (coarse), then count pixels clearly different from it
+            var counts = new Dictionary<int, int>();
+            for (int i = 0; i < px.Length; i += 4)
+            {
+                int c = (px[i] >> 4) | (px[i + 1] >> 4 << 4) | (px[i + 2] >> 4 << 8);
+                counts[c] = counts.GetValueOrDefault(c) + 1;
+            }
+            int bg = counts.MaxBy(kv => kv.Value).Key;
+            int b0 = (bg & 15) << 4, g0 = (bg >> 4 & 15) << 4, r0 = (bg >> 8 & 15) << 4;
+            int different = 0;
+            for (int i = 0; i < px.Length; i += 4)
+                if (Math.Abs(px[i] - b0) + Math.Abs(px[i + 1] - g0) + Math.Abs(px[i + 2] - r0) > 60) different++;
+            return different < n * 0.0005;       // fewer than 1 in 2000 pixels: not even one short word
+        }
+        catch { return false; }
     }
 
     static async Task<byte[]> RenderPngAsync(WinPdfPage winPage, Page page, R rect, double dpi, int maxSide)
@@ -1025,7 +1092,7 @@ static class Converter
         progress.Report(new Step("Saving", 1));
         return $"{Mark}\n\n# {Path.GetFileNameWithoutExtension(path)}\n\n" +
                (byAi ? $"> Text read from the picture by the built-in AI ({Ai.ModelName}) - verify.\n\n"
-                     : "> Text read from the picture by Windows OCR - verify.\n\n") +
+                     : "> Text read from the picture by the quick built-in reader - verify.\n\n") +
                (description != null ? $"### Description (AI - verify)\n\n{description}\n\n### Text\n\n" : "") +
                (text.Length > 0 ? text : "(no readable text in this picture)") + "\n";
     }

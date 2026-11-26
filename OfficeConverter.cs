@@ -60,6 +60,17 @@ sealed class OfficeConverter : IDisposable
 
     public void Dispose() => zip.Dispose();
 
+    /// <summary>True when the file holds any picture (so the AI may be needed).</summary>
+    public static bool HasPictures(string path)
+    {
+        try
+        {
+            using var z = ZipFile.OpenRead(path);
+            return z.Entries.Any(e => e.FullName.Contains("/media/", StringComparison.OrdinalIgnoreCase));
+        }
+        catch { return false; }
+    }
+
     public static async Task<string> ConvertAsync(string path, IProgress<Step> progress, CancellationToken ct)
     {
         using var c = new OfficeConverter(path, progress, ct);
@@ -76,7 +87,7 @@ sealed class OfficeConverter : IDisposable
         md.Append(c.aiUsed
             ? $"> Text comes from the file itself (exact). Pictures are {(Settings.Describe ? "described and " : "")}read by the built-in AI ({Ai.ModelName}) and CAN contain errors.\n\n"
             : c.picturesRead > 0
-            ? "> Text comes from the file itself (exact). Text inside pictures is read by Windows OCR and CAN contain errors.\n\n"
+            ? "> Text comes from the file itself (exact). Text inside pictures is read by the quick built-in reader and CAN contain errors.\n\n"
             : "> Text comes from the file itself (exact).\n\n");
         md.Append(body.Trim()).Append('\n');
         progress.Report(new Step("Saving", 1));
@@ -245,7 +256,7 @@ sealed class OfficeConverter : IDisposable
                 catch (Exception e) { Log.Write("AI: " + e.Message); }
             }
             string text = Converter.CleanOcr(await Converter.OcrAsync(bmp));
-            return text.Length == 0 ? "*(picture)*" : "**Picture text (Windows OCR - verify):**\n\n" + text;
+            return text.Length == 0 ? "*(picture)*" : "**Picture text (quick reader - verify):**\n\n" + text;
         }
         catch (Exception e)
         {

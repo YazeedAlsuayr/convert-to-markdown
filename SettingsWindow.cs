@@ -81,8 +81,11 @@ class SettingsWindow : Window
             "Adds a Description section to each page: how it is laid out and what each picture shows. About twice as slow.",
             () => Settings.Describe, v => Settings.Describe = v));
         body.Children.Add(Tick("Use the built-in AI",
-            "Reads the text in pictures and screenshots. When off, Windows OCR does it (faster, less accurate).",
+            "Reads the text in pictures and screenshots. When off, a quick built-in reader does it (faster, less accurate).",
             () => Settings.UseAi, v => { Settings.UseAi = v; Refresh(); }));
+        body.Children.Add(Tick("Accurate handwriting reading (slower)",
+            "Reads pen notes in PDFs with the AI. When off, a quick built-in reader is used: much faster, less accurate. Files without handwriting are not affected.",
+            () => Settings.HandwritingAi, v => Settings.HandwritingAi = v));
         aiStatus.Foreground = Sub;
         body.Children.Add(aiStatus);
         body.Children.Add(modelList);
@@ -182,7 +185,7 @@ class SettingsWindow : Window
                 var other = Ai.Models.FirstOrDefault(x => x.Id != m.Id && Ai.HasModel(x));
                 string after = !inUse ? ""
                     : other != null ? $"\nThe app will switch to {other.Name}."
-                    : "\nNo AI model will be left: pictures will be read by Windows OCR until you download one again.";
+                    : "\nNo AI model will be left: pictures will be read by the quick built-in reader until you download one again.";
                 var answer = MessageBox.Show(this, $"Delete {m.Name} ({m.Size})?{after}\nYou can download it again later.", "Convert to Markdown",
                                              MessageBoxButton.YesNo, MessageBoxImage.Question);
                 if (answer != MessageBoxResult.Yes) return;

@@ -472,6 +472,7 @@ static class Settings
         public bool UseAi { get; set; } = true;
         public string Model { get; set; } = "qwen";
         public bool Describe { get; set; } = false;
+        public bool HandwritingAi { get; set; } = true;
     }
 
     static Data Load()
@@ -496,6 +497,13 @@ static class Settings
     {
         get => Load().Describe;
         set { var d = Load(); d.Describe = value; Save(d); }
+    }
+
+    /// <summary>Read pen handwriting with the AI (more accurate, slower) or with Windows handwriting recognition (fast).</summary>
+    public static bool HandwritingAi
+    {
+        get => Load().HandwritingAi;
+        set { var d = Load(); d.HandwritingAi = value; Save(d); }
     }
 
     public static string Model

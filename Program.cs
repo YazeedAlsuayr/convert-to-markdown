@@ -69,7 +69,7 @@ static class Program
         if (args.Contains("--remove-ai"))
         {
             Ai.Remove();
-            System.Windows.MessageBox.Show("The AI was removed. Conversions now use Windows OCR for pictures.", "Convert to Markdown");
+            System.Windows.MessageBox.Show("The AI was removed. Conversions now use the quick built-in reader for pictures.", "Convert to Markdown");
             return 0;
         }
         if (args.Contains("--check-ai"))
@@ -83,7 +83,7 @@ static class Program
         if (aiFlag >= 0 && aiFlag + 1 < args.Length)
         {
             Settings.UseAi = args[aiFlag + 1].Equals("on", StringComparison.OrdinalIgnoreCase);
-            System.Windows.MessageBox.Show(Settings.UseAi ? "The AI is turned on." : "The AI is turned off (Windows OCR is used for pictures).", "Convert to Markdown");
+            System.Windows.MessageBox.Show(Settings.UseAi ? "The AI is turned on." : "The AI is turned off (the quick built-in reader is used for pictures).", "Convert to Markdown");
             return 0;
         }
 

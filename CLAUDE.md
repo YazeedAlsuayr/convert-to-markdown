@@ -9,8 +9,10 @@ preferences, local paths and private test files; it is not on GitHub).
 
 - **Branch:** work happens on **`dev`**. `main` = the safe copy (stage 1 only). Never commit to `main`.
 - **Stage 3 (Excel)** is committed and pushed on `dev` (commit `3088263`).
-- **Stage 4 (Word and PowerPoint)** is committed and pushed on `dev`. Nothing uncommitted.
-- **Next:** stage 5 (speed). Tell the owner the plan first and wait for "yes".
+- **Stage 4 (Word and PowerPoint)** is committed and pushed on `dev`.
+- **Stage 5 (speed)** is committed and pushed on `dev`. Nothing uncommitted.
+- **Next after that:** decide with the owner about merging `dev` → `main`, then stage 6.
+- UI wording: never say "Windows OCR" / "Windows handwriting" to users; say "quick built-in reader" (owner's wish).
 - **`Tests/` is in `.gitignore`**: the owner doesn't want any test file on GitHub. Never commit it.
 - The owner may ask you to commit/push for him; then add the co-author line `Co-Authored-By: Claude …`.
 - The owner is not a programmer. **Before doing anything, tell him in simple words what you will do and wait
@@ -71,7 +73,7 @@ The server only runs while converting and is tied to the app with a Windows Job 
 
 **Repo:** https://github.com/YazeedAlsuayr/convert-to-markdown (MIT License, © 2026 Yazeed Alsuayr)
 - Local clone (the only project folder): `C:\Users\iHero\Documents\GitHub\convert-to-markdown`
-- Branches: `main` (stage 1, safe), `dev` (stage 1 + 2 + "make it general" + 3 + 4).
+- Branches: `main` (stage 1, safe), `dev` (stage 1 + 2 + "make it general" + 3 + 4 + 5).
   `Tests/` is local only (git-ignored), never on GitHub.
 - GitHub Pages serves `docs/index.html` = the privacy policy:
   https://yazeedalsuayr.github.io/convert-to-markdown/
@@ -215,11 +217,25 @@ PowerPoint: native charts → `ChartText(part, null)` (null = not Excel: always 
 included.)*" (S9 ✅ ⭐); the 32×32 "Rx" logo is under the 40×25 px limit, so it never goes to the AI (S0 ✅).
 Not done: nested numbered lists under a numbered parent use 2-space indent (CommonMark wants 3).
 
-### Stage 5 — speed (todo)
-Preload the AI while text is read; skip blank pages and pictures with no text (quick Windows OCR check
-first); send 2–3 pictures per AI call; quick look for simple pages; skip tiny and repeated pictures (logos);
-flash attention (`-fa`). Then compare times (baseline: lecture 76 s stage 1 / ~110 s stage 2, challenge PDF
-40 s / 46 s) and decide with the owner about merging `dev` → `main`.
+### Stage 5 — speed ✅ done (committed and pushed on `dev`, 26 Nov)
+Owner's PC: **NVIDIA GTX 1070** (8 GB, Pascal). ~95% of conversion time is inside the AI; on this card the
+Vulkan engine is slow at *reading the picture* (~100–200 picture tokens/s), answer writing ~50 tokens/s.
+Measured "before": renal lecture 112 s (39 AI calls), challenge PDF 50 s, IBS pptx 31 s.
+Done:
+- AI starts in the background as soon as a file opens (`Converter.ConvertAsync`; Office only if it has
+  `/media/` pictures, `OfficeConverter.HasPictures`). ~1–2 s.
+- `AskOnceAsync`: exact same picture in one PDF asked once (SHA-256 of the PNG); almost-one-color pictures
+  (< 1 in 2000 pixels differ, `IsPlainAsync`) skipped. 0 s on the 3 test files, helps logos/empty boxes.
+- Handwriting retry: wrong line count → ask again in two halves (`ReadNotesAsync`), not one by one.
+  Renal p4 became better aligned ("Dehydration →", "Bleeding → RePerfusion" now right).
+- Setting **"Accurate handwriting reading (slower)"** (`Settings.HandwritingAi`, default on). Off = quick
+  built-in reader (Windows ink): renal 111 s → 79 s (−29%), stage-1 handwriting quality. Stage 7 can pick it.
+Tested and dropped: flash attention (`-fa` is `auto`; "not supported" on this Vulkan/GTX 1070, already off);
+2 requests at once (`-np` auto = 4 slots; each answer ~half speed, no gain); smaller pictures (quality risk,
+owner: quality first). Idea parked for stage 7: optional NVIDIA CUDA 12.4 engine (~750 MB, NVIDIA only;
+CUDA 13 dropped Pascal) — not tested.
+Results: renal 112 → 110 s (AI handwriting) / 79 s (fast handwriting); challenge PDF 50 → 49 s; IBS 31 → 31 s;
+text identical except renal p4 handwriting (better). Office kit outputs identical.
 
 ### Stage 6 — clear error messages (todo)
 Password PDF throws `COMException 0x80048040`, damaged PDF `0x80004005`; both show an empty reason today.
