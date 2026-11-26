@@ -35,6 +35,20 @@ sealed class OfficeConverter : IDisposable
     readonly Dictionary<string, string> styleNames = new();
     readonly Dictionary<string, string> numToAbstract = new();
     readonly Dictionary<(string, int), string> listFormats = new();
+    readonly Dictionary<string, XElement> styleNumPr = new();
+    readonly Dictionary<string, string> styleBasedOn = new();
+    readonly Dictionary<(string, int), int> listCounters = new();
+
+    /// <summary>The numbering a paragraph style gives (looking through the styles it is based on).</summary>
+    XElement StyleNumPr(string styleId)
+    {
+        for (int depth = 0; styleId != null && depth < 10; depth++)
+        {
+            if (styleNumPr.TryGetValue(styleId, out var np)) return np;
+            styleBasedOn.TryGetValue(styleId, out styleId);
+        }
+        return null;
+    }
 
     OfficeConverter(string path, IProgress<Step> progress, CancellationToken ct)
     {
@@ -75,7 +89,13 @@ sealed class OfficeConverter : IDisposable
         var e = part == null ? null : zip.GetEntry(part);
         if (e == null) return null;
         using var s = e.Open();
-        return XDocument.Load(s);
+        // keep a text piece that is only a space ("Diagnostic" + " " + "Criteria" in PowerPoint, which has no
+        // xml:space="preserve"); drop only the layout whitespace between tags
+        var doc = XDocument.Load(s, LoadOptions.PreserveWhitespace);
+        doc.DescendantNodes().OfType<XText>()
+            .Where(t => string.IsNullOrWhiteSpace(t.Value) && t.Parent != null && t.Parent.Elements().Any())
+            .ToList().ForEach(t => t.Remove());
+        return doc;
     }
 
     /// <summary>Relationship id -> full part path (or the URL for external links).</summary>
@@ -246,7 +266,13 @@ sealed class OfficeConverter : IDisposable
             foreach (var st in styles.Root.Elements(W + "style"))
             {
                 string id = (string)st.Attribute(W + "styleId"), name = (string)st.Element(W + "name")?.Attribute(W + "val");
-                if (id != null && name != null) styleNames[id] = name.ToLowerInvariant();
+                if (id == null) continue;
+                if (name != null) styleNames[id] = name.ToLowerInvariant();
+                // list styles ("List Number", "List Bullet 2") keep their numbering in the style, not in each paragraph
+                var snp = st.Element(W + "pPr")?.Element(W + "numPr");
+                if (snp != null) styleNumPr[id] = snp;
+                string based = (string)st.Element(W + "basedOn")?.Attribute(W + "val");
+                if (based != null) styleBasedOn[id] = based;
             }
         var numbering = Load("word/numbering.xml");
         if (numbering?.Root != null)
@@ -310,21 +336,38 @@ sealed class OfficeConverter : IDisposable
         {
             if (heading > 0)
             {
-                sb.Append(new string('#', Math.Min(heading + 1, 6))).Append(' ').Append(text);
+                // the document's own title is the main heading; "Heading 1" sits one level below it
+                sb.Append(new string('#', style == "title" ? 1 : Math.Min(heading + 1, 6))).Append(' ').Append(text);
                 kind = "heading";
             }
             else
             {
                 var numPr = ppr?.Element(W + "numPr");
-                if (numPr != null || style.StartsWith("list"))
+                var styleNp = StyleNumPr(styleId);
+                string numId = (string)numPr?.Element(W + "numId")?.Attribute(W + "val") ?? (string)styleNp?.Element(W + "numId")?.Attribute(W + "val");
+                if (numId == "0") numId = null;                          // numbering switched off for this paragraph
+                if (numId != null || (numPr == null && style.StartsWith("list")))
                 {
-                    int ilvl = (int?)numPr?.Element(W + "ilvl")?.Attribute(W + "val") ?? 0;
-                    string numId = (string)numPr?.Element(W + "numId")?.Attribute(W + "val");
+                    int? ownLvl = (int?)numPr?.Element(W + "ilvl")?.Attribute(W + "val");
+                    int numLvl = ownLvl ?? (int?)styleNp?.Element(W + "ilvl")?.Attribute(W + "val") ?? 0;   // level inside the numbering
+                    int ilvl = numLvl;
+                    // "List Bullet 2", "List Number 3": the number in the style name is the indent level
+                    var lm = Regex.Match(style, @"^list(?: bullet| number| continue)?\s+(\d)$");
+                    if (ownLvl == null && lm.Success) ilvl = Math.Max(ilvl, int.Parse(lm.Groups[1].Value) - 1);
                     bool bullet = true;
                     if (numId != null && numToAbstract.TryGetValue(numId, out var abs) && abs != null
-                        && listFormats.TryGetValue((abs, ilvl), out var fmt))
+                        && listFormats.TryGetValue((abs, numLvl), out var fmt))
                         bullet = fmt is "bullet" or "none";
-                    sb.Append(new string(' ', 2 * ilvl)).Append(bullet ? "- " : "1. ").Append(text);
+                    string marker = "- ";
+                    if (!bullet)
+                    {
+                        // count 1, 2, 3 per list and level; a higher level starts the deeper levels again
+                        var key = (numId ?? style, ilvl);
+                        listCounters[key] = listCounters.GetValueOrDefault(key) + 1;
+                        foreach (var k in listCounters.Keys.Where(k => k.Item1 == key.Item1 && k.Item2 > ilvl).ToList()) listCounters.Remove(k);
+                        marker = listCounters[key] + ". ";
+                    }
+                    sb.Append(new string(' ', 2 * ilvl)).Append(marker).Append(text);
                     kind = "list";
                 }
                 else sb.Append(text);
@@ -468,11 +511,19 @@ sealed class OfficeConverter : IDisposable
             .Where(id => id != null && rels.ContainsKey(id))
             .Select(id => rels[id]).ToList() ?? new List<string>();
         var md = new StringBuilder();
+        var hidden = new List<int>();
         for (int i = 0; i < slides.Count; i++)
         {
             ct.ThrowIfCancellationRequested();
             progress.Report(new Step($"Slide {i + 1} of {slides.Count}", (double)i / Math.Max(1, slides.Count)));
-            md.Append(await SlideAsync(slides[i], i + 1));
+            string slide = await SlideAsync(slides[i], i + 1);
+            if (slide == null) hidden.Add(i + 1);
+            else md.Append(slide);
+        }
+        if (hidden.Count > 0)
+        {
+            md.Append($"\n\n---\n\n*({(hidden.Count == 1 ? "Slide " : "Slides ")}{string.Join(", ", hidden)} hidden in the slide show, not included.)*\n");
+            Log.Write($"PowerPoint: {hidden.Count} hidden slide(s) skipped");
         }
         return md.ToString();
     }
@@ -481,6 +532,8 @@ sealed class OfficeConverter : IDisposable
     {
         var doc = Load(part);
         if (doc?.Root == null) return "";
+        string show = (string)doc.Root.Attribute("show");
+        if (show is "0" or "false") return null;                 // hidden slide
         var rels = Rels(part);
         string title = null;
         var items = new List<(double y, double x, string md)>();
@@ -557,8 +610,12 @@ sealed class OfficeConverter : IDisposable
                         .Select(tc => Cell(string.Join("\n", tc.Descendants(A + "p").Select(ParaText).Where(s => s.Length > 0)))).ToList()).ToList();
                     items.Add((y, x, MarkdownTable(rows)));
                 }
-                else if (e.Descendants().Any(d => d.Name.LocalName == "chart"))
-                    items.Add((y, x, "*(chart)*"));
+                else if (e.Descendants().FirstOrDefault(d => d.Name.LocalName == "chart") is XElement ch)
+                {
+                    // the chart keeps a copy of its numbers inside the file: title, kind and values, no AI needed
+                    string rid = (string)ch.Attribute(R + "id");
+                    items.Add((y, x, rid != null && rels.TryGetValue(rid, out var chartPart) ? ChartText(chartPart, null) : "*(chart)*"));
+                }
             }
             else if (e.Name == P + "pic")
             {
@@ -879,7 +936,11 @@ sealed class OfficeConverter : IDisposable
         ["scatterChart"] = "scatter", ["radarChart"] = "radar", ["bubbleChart"] = "bubble", ["stockChart"] = "stock", ["surfaceChart"] = "surface"
     };
 
-    /// <summary>A chart: its title, kind and data ranges, and its numbers when they come from another sheet.</summary>
+    /// <summary>
+    /// A chart: its title, kind and data ranges, and its numbers when they come from another sheet.
+    /// <paramref name="sheetName"/> null = a chart in Word or PowerPoint: always the numbers, no cell ranges
+    /// (they point into a hidden workbook inside the file, which means nothing to the reader).
+    /// </summary>
     string ChartText(string part, string sheetName)
     {
         var doc = Load(part);
@@ -906,11 +967,15 @@ sealed class OfficeConverter : IDisposable
         var sb = new StringBuilder($"**Chart{(title.Length > 0 ? ": " + title : "")}**");
         if (kind.Length > 0) sb.Append($" ({kind} chart)");
         ranges = ranges.Distinct().ToList();
-        if (ranges.Count > 0) sb.Append("\n\nData: ").Append(string.Join(", ", ranges));
+        if (ranges.Count > 0 && sheetName != null) sb.Append("\n\nData: ").Append(string.Join(", ", ranges));
 
         // the numbers themselves, unless they are in a table on this same sheet (already written above)
-        string own = "'" + sheetName.Replace("'", "''") + "'!";
-        bool sameSheet = ranges.Count > 0 && ranges.All(r => r.StartsWith(sheetName + "!") || r.StartsWith(own) || !r.Contains('!'));
+        bool sameSheet = false;
+        if (sheetName != null)
+        {
+            string own = "'" + sheetName.Replace("'", "''") + "'!";
+            sameSheet = ranges.Count > 0 && ranges.All(r => r.StartsWith(sheetName + "!") || r.StartsWith(own) || !r.Contains('!'));
+        }
         if (!sameSheet && series.Count > 0)
         {
             int n = series.Max(s => Math.Max(s.cats.Count, s.vals.Count));

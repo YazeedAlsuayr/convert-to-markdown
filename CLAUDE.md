@@ -5,16 +5,14 @@ preferences, local paths and private test files; it is not on GitHub).
 
 ---
 
-## 0. Start here (state on 26 Nov 2026)
+## 0. Start here (state on 26 Nov 2026, evening)
 
 - **Branch:** work happens on **`dev`**. `main` = the safe copy (stage 1 only). Never commit to `main`.
-- **Uncommitted right now on `dev`:** stage 3 (Excel): `OfficeConverter.cs` (rewritten Excel part) and the
-  new `ExcelFormat.cs`. **It has never been compiled.** It was written without a compiler; the same logic was
-  prototyped in Python against the test kit and matched the answer key.
-- **First task:** build (`dotnet build ConvertToMarkdown.csproj -c Release`), fix any compile errors in the
-  stage 3 code, then convert `Tests/Challenge test kit/02 Challenge - Excel.xlsx` and grade it against
-  checks X1–X7 in `Tests/Challenge test kit/00 TEST KEY.md` (expected output: section 8.3 below).
-  Then show the owner the result and **wait** before committing.
+- **Stage 3 (Excel)** is committed and pushed on `dev` (commit `3088263`).
+- **Stage 4 (Word and PowerPoint)** is committed and pushed on `dev`. Nothing uncommitted.
+- **Next:** stage 5 (speed). Tell the owner the plan first and wait for "yes".
+- **`Tests/` is in `.gitignore`**: the owner doesn't want any test file on GitHub. Never commit it.
+- The owner may ask you to commit/push for him; then add the co-author line `Co-Authored-By: Claude …`.
 - The owner is not a programmer. **Before doing anything, tell him in simple words what you will do and wait
   for "yes"** (details in section 1).
 
@@ -73,7 +71,8 @@ The server only runs while converting and is tied to the app with a Windows Job 
 
 **Repo:** https://github.com/YazeedAlsuayr/convert-to-markdown (MIT License, © 2026 Yazeed Alsuayr)
 - Local clone (the only project folder): `C:\Users\iHero\Documents\GitHub\convert-to-markdown`
-- Branches: `main` (stage 1, safe), `dev` (stage 1 + 2 + "make it general" + uncommitted stage 3).
+- Branches: `main` (stage 1, safe), `dev` (stage 1 + 2 + "make it general" + 3 + 4).
+  `Tests/` is local only (git-ignored), never on GitHub.
 - GitHub Pages serves `docs/index.html` = the privacy policy:
   https://yazeedalsuayr.github.io/convert-to-markdown/
 
@@ -191,7 +190,9 @@ chosen automatically by the stage-7 setup window. Fix the lost-notes problem bef
 Prompts, UI text, .md header, setup window, README made general; `STORE LISTING v2.1.txt` written
 (update its "What's new" at release). `Vocabulary.cs` medical list kept on purpose.
 
-### Stage 3 — Excel ⏳ written, NOT compiled (uncommitted on `dev`)
+### Stage 3 — Excel ✅ done (committed and pushed on `dev`, 26 Nov)
+Kit: all X1–X7 checks pass (old code ~5 of 18). Owner's real Excel file converts well; a 2-column block whose
+first row has a sentence on the right (> 30 chars or ends with ".") is a label/value list, not a table.
 Implemented: number formats (`ExcelFormat.cs`), skip hidden sheets/rows/columns, sheet split into separate
 tables (8-neighbour cell groups, cut where a new all-text header row with a different column span starts
 right under a row with numbers), title/note rows above a table → `### title` + text, 2-column label/value
@@ -200,11 +201,19 @@ blocks → `- **label:** value`, single-row blocks → `a · b · c`, cell links
 sheet), pictures in sheets → AI. Not done yet: side-by-side tables that share rows AND touch (gap of 0 cols).
 Expected output for the kit: section 8.3.
 
-### Stage 4 — Word and PowerPoint (todo)
-Word: numbered lists keep numbers (`1.` not `-`), nesting levels kept (W4), document title as `#` (W2),
-header/footer logo not sent to the AI (W1). PowerPoint: native chart data (S5: currently `*(chart)*`),
-skip hidden slides (S9: hidden slide currently shown), tiny repeated logo not sent to AI (S0).
-Reuse `ChartText`/`Points` from stage 3 for PowerPoint charts (same DrawingML chart XML).
+### Stage 4 — Word and PowerPoint ✅ done (committed and pushed on `dev`, 26 Nov)
+Also: `Load` keeps text pieces that are only a space (PowerPoint `<a:t> </a:t>` has no xml:space, so
+"Diagnostic"+" "+"Criteria" became "DiagnosticCriteria"); only layout whitespace between tags is dropped.
+Tested on the owner's real lecture `IBS 2026.pptx` (in `Tests/private/`): text 100% right; AI read "CAPSULES"
+on the slide 1 drawing as "TOUCLES" (stage 8).
+Word: list numbering is read from the paragraph style too (`StyleNumPr`, follows `basedOn`), so "List Number"
+→ `1. 2. 3.` (real counters per list/level, `listCounters`) and "List Bullet 2" → indented one level (level from
+the style name's digit) (W4 ✅); the `Title` style → `#` (W2 ✅). W1 already passed: headers/footers are not read,
+so the header logo never reaches the AI (the body's brand logo is a real picture and is read).
+PowerPoint: native charts → `ChartText(part, null)` (null = not Excel: always the values table, no cell ranges)
+(S5 ✅); slides with `show="0"` skipped and one line at the end "*(Slide 9 hidden in the slide show, not
+included.)*" (S9 ✅ ⭐); the 32×32 "Rx" logo is under the 40×25 px limit, so it never goes to the AI (S0 ✅).
+Not done: nested numbered lists under a numbered parent use 2-space indent (CommonMark wants 3).
 
 ### Stage 5 — speed (todo)
 Preload the AI while text is read; skip blank pages and pictures with no text (quick Windows OCR check
@@ -262,8 +271,8 @@ PDF (`01`): passes P0.1, P1.x, P2.1–2.2, P3.1–3.2, P4.1–4.3, P5.2–5.3, P
 P10.x, P11.1, P11.3–11.5 (P11.4 on `dev`), P12.x, P13.1, P14.1, P15.1. Partial: P5.1 (spanning header over
 Child), P6.2 ⭐ (not a Markdown table), P6.3 (Arabic: "البراسيستامول", "يوميا"), P11.2 (strike-through only
 reported as "pen mark on"). Check P0.2/T2 in the log (tiny logo must not reach the AI).
-Word: fails W2 (title `##` instead of `#`), W4 (numbered list shown as bullets, nesting lost), W1 (logo sent
-to AI). PowerPoint: fails S5 (chart), S9 (hidden slide shown). Pictures: I7 Arabic error "بعد أقصى", I10
+Excel: all X1–X7 pass (stage 3). Word: all W1–W9 pass (stage 4). PowerPoint: all S0–S9 pass (stage 4).
+AI pictures vary a little between runs ("ACADEMY · EST." vs "ACADEMY . EST."). Pictures: I7 Arabic error "بعد أقصى", I10
 decorative gives `[unclear]` (should be nothing). Edge: E12/E13 fail (stage 6), E14 passes.
 
 ### 8.3 Expected Excel output after stage 3 (from the Python prototype)
