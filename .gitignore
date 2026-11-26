@@ -11,3 +11,11 @@ engine-cache/
 *.msix
 test-build.log
 test-run.log
+
+# private notes and private test files (not for GitHub)
+CLAUDE.local.md
+
+# all test files stay on this PC only (never on GitHub)
+Tests/
+*.local.md
+.claude/settings.local.json

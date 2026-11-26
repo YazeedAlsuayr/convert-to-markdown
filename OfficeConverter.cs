@@ -55,7 +55,7 @@ sealed class OfficeConverter : IDisposable
         {
             ".docx" or ".docm" => await c.WordAsync(),
             ".pptx" or ".pptm" => await c.PowerPointAsync(),
-            _ => c.Excel()
+            _ => await c.ExcelAsync()
         };
         var md = new StringBuilder();
         md.Append(Converter.Mark).Append("\n\n# ").Append(Path.GetFileNameWithoutExtension(path)).Append("\n\n");
@@ -585,7 +585,15 @@ sealed class OfficeConverter : IDisposable
     }
 
     // ======================= Excel =======================
-    string Excel()
+    static readonly XNamespace C = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+    static readonly XNamespace Xdr = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
+
+    static bool IsTrue(XAttribute a) => a != null && ((string)a == "1" || ((string)a).Equals("true", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>One cell: the text Excel shows, and whether it holds a number (for telling headers from data).</summary>
+    record struct XCell(string Text, bool Number);
+
+    async Task<string> ExcelAsync()
     {
         const string main = "xl/workbook.xml";
         var wb = Load(main) ?? throw new InvalidDataException("This Excel file has no workbook inside.");
@@ -595,54 +603,357 @@ sealed class OfficeConverter : IDisposable
         if (ss?.Root != null)
             foreach (var item in ss.Root.Elements(S + "si"))
                 shared.Add(string.Concat(item.Descendants(S + "t").Where(t => t.Parent?.Name != S + "rPh").Select(t => t.Value)));
+        bool date1904 = IsTrue(wb.Root?.Element(S + "workbookPr")?.Attribute("date1904"));
+
+        // number formats: style index -> format code
+        var formats = new Dictionary<int, string>();
+        var xfFormat = new List<int>();
+        var styles = Load("xl/styles.xml");
+        if (styles?.Root != null)
+        {
+            foreach (var f in styles.Root.Element(S + "numFmts")?.Elements(S + "numFmt") ?? Enumerable.Empty<XElement>())
+                if (int.TryParse((string)f.Attribute("numFmtId"), out int fid)) formats[fid] = (string)f.Attribute("formatCode");
+            foreach (var xf in styles.Root.Element(S + "cellXfs")?.Elements(S + "xf") ?? Enumerable.Empty<XElement>())
+                xfFormat.Add(int.TryParse((string)xf.Attribute("numFmtId"), out int fid) ? fid : 0);
+        }
+        string FormatOf(int style)
+        {
+            int fid = style >= 0 && style < xfFormat.Count ? xfFormat[style] : 0;
+            return formats.TryGetValue(fid, out var code) ? code : ExcelFormat.BuiltIn.TryGetValue(fid, out var b) ? b : "General";
+        }
 
         var sheets = wb.Root?.Element(S + "sheets")?.Elements(S + "sheet").ToList() ?? new List<XElement>();
         var md = new StringBuilder();
+        int hiddenSheets = 0;
         for (int k = 0; k < sheets.Count; k++)
         {
             ct.ThrowIfCancellationRequested();
             progress.Report(new Step($"Sheet {k + 1} of {sheets.Count}", (double)k / sheets.Count));
             string name = (string)sheets[k].Attribute("name") ?? $"Sheet {k + 1}";
+            string state = (string)sheets[k].Attribute("state");
+            if (state is "hidden" or "veryHidden") { hiddenSheets++; continue; }
             string id = (string)sheets[k].Attribute(R + "id");
             if (id == null || !rels.TryGetValue(id, out var part)) continue;
             var doc = Load(part);
-            var data = doc?.Root?.Element(S + "sheetData");
+            var root = doc?.Root;
+            var data = root?.Element(S + "sheetData");
             if (data == null) continue;                                  // chart sheets
+            var sheetRels = Rels(part);
 
-            var grid = new SortedDictionary<int, SortedDictionary<int, string>>();
+            var hiddenCols = new HashSet<int>();
+            foreach (var col in root.Element(S + "cols")?.Elements(S + "col") ?? Enumerable.Empty<XElement>())
+                if (IsTrue(col.Attribute("hidden")) && int.TryParse((string)col.Attribute("min"), out int c0) && int.TryParse((string)col.Attribute("max"), out int c1))
+                    for (int ci = c0; ci <= Math.Min(c1, 16384); ci++) hiddenCols.Add(ci);
+            var hiddenRows = new HashSet<int>();
+
+            // links: cell -> web address
+            var links = new Dictionary<(int, int), string>();
+            foreach (var h in root.Element(S + "hyperlinks")?.Elements(S + "hyperlink") ?? Enumerable.Empty<XElement>())
+            {
+                string rid = (string)h.Attribute(R + "id"), cref = ((string)h.Attribute("ref") ?? "").Split(':')[0];
+                if (rid != null && sheetRels.TryGetValue(rid, out var url) && url.Contains(':') && cref.Length > 0)
+                    links[(RowIndex(cref), ColumnIndex(cref))] = url;
+            }
+
+            var grid = new Dictionary<(int r, int c), XCell>();
             int lastRow = 0;
             foreach (var row in data.Elements(S + "row"))
             {
                 int r = (int?)row.Attribute("r") ?? lastRow + 1;
                 lastRow = r;
+                if (IsTrue(row.Attribute("hidden"))) { hiddenRows.Add(r); continue; }
                 int nextCol = 1;
                 foreach (var c in row.Elements(S + "c"))
                 {
                     string cref = (string)c.Attribute("r");
                     int col = cref != null ? ColumnIndex(cref) : nextCol;
                     nextCol = col + 1;
+                    if (hiddenCols.Contains(col)) continue;
                     string t = (string)c.Attribute("t"), v = (string)c.Element(S + "v");
-                    string val = t switch
+                    bool number = false;
+                    string val;
+                    switch (t)
                     {
-                        "s" => int.TryParse(v, out int idx) && idx >= 0 && idx < shared.Count ? shared[idx] : "",
-                        "inlineStr" => string.Concat(c.Element(S + "is")?.Descendants(S + "t").Select(x => x.Value) ?? Enumerable.Empty<string>()),
-                        "b" => v == "1" ? "TRUE" : "FALSE",
-                        _ => v ?? ""
-                    };
+                        case "s": val = int.TryParse(v, out int idx) && idx >= 0 && idx < shared.Count ? shared[idx] : ""; break;
+                        case "inlineStr": val = string.Concat(c.Element(S + "is")?.Descendants(S + "t").Select(x => x.Value) ?? Enumerable.Empty<string>()); break;
+                        case "b": val = v == "1" ? "TRUE" : "FALSE"; break;
+                        case "e": val = v ?? ""; number = true; break;
+                        case "str": val = v ?? ""; break;
+                        default:
+                            if (v == null) { val = ""; break; }
+                            if (double.TryParse(v, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double num))
+                            {
+                                val = ExcelFormat.Format(num, FormatOf((int?)c.Attribute("s") ?? 0), date1904);
+                                number = true;
+                            }
+                            else val = v;
+                            break;
+                    }
                     if (val.Trim().Length == 0) continue;
-                    if (!grid.TryGetValue(r, out var cells)) grid[r] = cells = new SortedDictionary<int, string>();
-                    cells[col] = Cell(val);
+                    string text = Cell(val);
+                    if (links.TryGetValue((r, col), out var link)) text = $"[{text}]({link})";
+                    grid[(r, col)] = new XCell(text, number);
                 }
             }
 
             md.Append($"\n\n## {name}\n\n");
-            if (grid.Count == 0) { md.Append("(empty sheet)\n"); continue; }
-            int minC = grid.Values.Min(r => r.Keys.Min()), maxC = Math.Min(grid.Values.Max(r => r.Keys.Max()), minC + 200);
-            var rows = grid.Values.Select(cells => Enumerable.Range(minC, maxC - minC + 1)
-                .Select(ci => cells.TryGetValue(ci, out var s) ? s : "").ToList()).ToList();
-            md.Append(MarkdownTable(rows)).Append('\n');
+            if (grid.Count == 0) md.Append("(empty sheet)\n");
+            else
+            {
+                bool first = true;
+                foreach (var block in SheetBlocks(grid))
+                {
+                    md.Append(RenderBlock(grid, block, first)).Append("\n\n");
+                    first = false;
+                }
+            }
+
+            // cell notes (comments)
+            foreach (var target in sheetRels.Values.Where(t => Path.GetFileName(t).StartsWith("comments", StringComparison.OrdinalIgnoreCase)))
+            {
+                var cdoc = Load(target);
+                var notes = new List<string>();
+                foreach (var cm in cdoc?.Root?.Descendants(S + "comment") ?? Enumerable.Empty<XElement>())
+                {
+                    string cref = (string)cm.Attribute("ref") ?? "";
+                    if (cref.Length == 0 || hiddenRows.Contains(RowIndex(cref)) || hiddenCols.Contains(ColumnIndex(cref))) continue;
+                    string note = Regex.Replace(string.Concat(cm.Element(S + "text")?.Descendants(S + "t").Select(x => x.Value) ?? Enumerable.Empty<string>()), @"\s+", " ").Trim();
+                    if (note.Length == 0) continue;
+                    string on = grid.TryGetValue((RowIndex(cref), ColumnIndex(cref)), out var cell) ? $" ({cell.Text})" : "";
+                    notes.Add($"- **{cref}**{on}: {note}");
+                }
+                if (notes.Count > 0) md.Append("**Notes**\n\n").Append(string.Join("\n", notes)).Append("\n\n");
+            }
+
+            // charts and pictures, top to bottom
+            foreach (var dpart in sheetRels.Values.Where(t => Path.GetFileName(t).StartsWith("drawing", StringComparison.OrdinalIgnoreCase) && t.EndsWith(".xml")))
+                md.Append(await DrawingAsync(dpart, name));
         }
+        if (hiddenSheets > 0) Log.Write($"Excel: {hiddenSheets} hidden sheet(s) skipped");
         return md.ToString();
+    }
+
+    /// <summary>
+    /// The separate tables on a sheet: groups of touching cells. A group is cut again where a new header row starts
+    /// right under a table (all text, a different set of columns, after a row with numbers).
+    /// </summary>
+    static List<List<(int r, int c)>> SheetBlocks(Dictionary<(int r, int c), XCell> grid)
+    {
+        var comp = new Dictionary<(int r, int c), int>();
+        var groups = new List<List<(int r, int c)>>();
+        foreach (var start in grid.Keys.OrderBy(k => k.r).ThenBy(k => k.c))
+        {
+            if (comp.ContainsKey(start)) continue;
+            var members = new List<(int r, int c)>();
+            var stack = new Stack<(int r, int c)>();
+            stack.Push(start);
+            comp[start] = groups.Count;
+            while (stack.Count > 0)
+            {
+                var (r, c) = stack.Pop();
+                members.Add((r, c));
+                for (int dr = -1; dr <= 1; dr++)
+                    for (int dc = -1; dc <= 1; dc++)
+                    {
+                        var nb = (r + dr, c + dc);
+                        if (grid.ContainsKey(nb) && !comp.ContainsKey(nb)) { comp[nb] = groups.Count; stack.Push(nb); }
+                    }
+            }
+            groups.Add(members);
+        }
+
+        var blocks = new List<List<(int r, int c)>>();
+        foreach (var g in groups)
+        {
+            var rows = g.Select(x => x.r).Distinct().OrderBy(x => x).ToList();
+            (int, int) Span(int row) { var cs = g.Where(x => x.r == row).Select(x => x.c).ToList(); return (cs.Min(), cs.Max()); }
+            var current = new List<int> { rows[0] };
+            var cuts = new List<List<int>> { current };
+            for (int i = 1; i < rows.Count; i++)
+            {
+                int a = rows[i - 1], b = rows[i];
+                var rowA = g.Where(x => x.r == a).ToList();
+                var rowB = g.Where(x => x.r == b).ToList();
+                bool newHeader = b == a + 1 && !Span(a).Equals(Span(b)) && rowB.Count >= 2
+                                 && rowB.All(x => !grid[x].Number) && rowA.Any(x => grid[x].Number);
+                if (newHeader) { current = new List<int>(); cuts.Add(current); }
+                current.Add(b);
+            }
+            foreach (var cut in cuts) blocks.Add(g.Where(x => cut.Contains(x.r)).ToList());
+        }
+        return blocks.OrderBy(b => b.Min(x => x.r)).ThenBy(b => b.Min(x => x.c)).ToList();
+    }
+
+    /// <summary>
+    /// A block of cells: title and note lines above a table become text, a two-column list of labels and values
+    /// becomes "label: value" lines, everything else a Markdown table.
+    /// </summary>
+    static string RenderBlock(Dictionary<(int r, int c), XCell> grid, List<(int r, int c)> block, bool firstOnSheet)
+    {
+        var rows = block.Select(x => x.r).Distinct().OrderBy(x => x).ToList();
+        int c0 = block.Min(x => x.c), c1 = block.Max(x => x.c);
+        var sb = new StringBuilder();
+        bool heading = firstOnSheet;
+        // single-cell rows above the table: the title, then notes
+        while (rows.Count > 0 && block.Count(x => x.r == rows[0]) == 1 && (rows.Count > 1 || c0 == c1))
+        {
+            var only = block.First(x => x.r == rows[0]);
+            if (rows.Count == 1 && !heading) break;
+            sb.Append(heading ? "### " : "").Append(grid[only].Text).Append("\n\n");
+            heading = false;
+            rows.RemoveAt(0);
+            if (c0 == c1 && rows.Count > 0 && block.Where(x => rows.Contains(x.r)).All(x => x.c == c0)) continue;
+            c0 = block.Where(x => rows.Contains(x.r)).Select(x => x.c).DefaultIfEmpty(c0).Min();
+            c1 = block.Where(x => rows.Contains(x.r)).Select(x => x.c).DefaultIfEmpty(c1).Max();
+        }
+        if (rows.Count == 0) return sb.ToString().TrimEnd();
+        string At(int r, int c) => grid.TryGetValue((r, c), out var x) ? x.Text : "";
+
+        // one column: lines of text
+        if (c0 == c1)
+        {
+            sb.Append(string.Join("\n", rows.Select(r => At(r, c0))));
+            return sb.ToString().TrimEnd();
+        }
+        // a label and a value per row (no header): "label: value"
+        // (a header is short words; a number or a sentence on the right means the first row is already data)
+        bool firstRowIsData = rows.Count == 1 || (grid.TryGetValue((rows[0], c1), out var fv)
+            && (fv.Number || fv.Text.Length > 30 || fv.Text.TrimEnd().EndsWith('.')));
+        if (c1 == c0 + 1 && firstRowIsData)
+        {
+            foreach (int r in rows)
+            {
+                string label = At(r, c0), value = At(r, c1);
+                sb.Append("- ").Append(label.Length > 0 && value.Length > 0 ? $"**{label}:** {value}" : label + value).Append('\n');
+            }
+            return sb.ToString().TrimEnd();
+        }
+        // one row, several cells
+        if (rows.Count == 1)
+        {
+            sb.Append(string.Join(" · ", Enumerable.Range(c0, c1 - c0 + 1).Select(c => At(rows[0], c)).Where(t => t.Length > 0)));
+            return sb.ToString().TrimEnd();
+        }
+        var table = rows.Select(r => Enumerable.Range(c0, c1 - c0 + 1).Select(c => At(r, c)).ToList()).ToList();
+        sb.Append(MarkdownTable(table));
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>The charts and pictures placed on a sheet, in the order they appear (top to bottom, left to right).</summary>
+    async Task<string> DrawingAsync(string part, string sheetName)
+    {
+        var doc = Load(part);
+        if (doc?.Root == null) return "";
+        var drels = Rels(part);
+        var items = new List<(int row, int col, XElement el)>();
+        foreach (var anchor in doc.Root.Elements())
+        {
+            var from = anchor.Element(Xdr + "from");
+            int row = (int?)from?.Element(Xdr + "row") ?? 0, col = (int?)from?.Element(Xdr + "col") ?? 0;
+            items.Add((row, col, anchor));
+        }
+        var sb = new StringBuilder();
+        foreach (var (_, _, anchor) in items.OrderBy(i => i.row).ThenBy(i => i.col))
+        {
+            ct.ThrowIfCancellationRequested();
+            foreach (var chartRef in anchor.Descendants(C + "chart"))
+            {
+                string rid = (string)chartRef.Attribute(R + "id");
+                if (rid != null && drels.TryGetValue(rid, out var chartPart)) sb.Append(ChartText(chartPart, sheetName)).Append("\n\n");
+            }
+            foreach (var blip in anchor.Descendants(A + "blip"))
+            {
+                string rid = (string)blip.Attribute(R + "embed") ?? (string)blip.Attribute(R + "link");
+                if (rid == null || !drels.TryGetValue(rid, out var target)) continue;
+                string pic = await PictureAsync(target);
+                if (pic != null) sb.Append(pic).Append("\n\n");
+            }
+        }
+        return sb.ToString();
+    }
+
+    static readonly Dictionary<string, string> ChartKinds = new()
+    {
+        ["barChart"] = "bar", ["bar3DChart"] = "bar", ["lineChart"] = "line", ["line3DChart"] = "line", ["pieChart"] = "pie",
+        ["pie3DChart"] = "pie", ["doughnutChart"] = "doughnut", ["areaChart"] = "area", ["area3DChart"] = "area",
+        ["scatterChart"] = "scatter", ["radarChart"] = "radar", ["bubbleChart"] = "bubble", ["stockChart"] = "stock", ["surfaceChart"] = "surface"
+    };
+
+    /// <summary>A chart: its title, kind and data ranges, and its numbers when they come from another sheet.</summary>
+    string ChartText(string part, string sheetName)
+    {
+        var doc = Load(part);
+        var chart = doc?.Root?.Element(C + "chart");
+        if (chart == null) return "*(chart)*";
+        string title = Regex.Replace(string.Join(" ", chart.Element(C + "title")?.Descendants(A + "t").Select(t => t.Value) ?? Enumerable.Empty<string>()), @"\s+", " ").Trim();
+        var plot = chart.Element(C + "plotArea");
+        var kinds = plot?.Elements().Where(e => ChartKinds.ContainsKey(e.Name.LocalName)).ToList() ?? new List<XElement>();
+        string kind = string.Join(" and ", kinds.Select(e =>
+            e.Name.LocalName.StartsWith("bar") && (string)e.Element(C + "barDir")?.Attribute("val") == "col" ? "column" : ChartKinds[e.Name.LocalName]).Distinct());
+
+        var series = new List<(string name, List<string> cats, List<string> vals)>();
+        var ranges = new List<string>();
+        foreach (var ser in kinds.SelectMany(e => e.Elements(C + "ser")))
+        {
+            string sname = ser.Element(C + "tx")?.Descendants(C + "v").FirstOrDefault()?.Value ?? "";
+            var cat = ser.Element(C + "cat") ?? ser.Element(C + "xVal");
+            var val = ser.Element(C + "val") ?? ser.Element(C + "yVal");
+            foreach (var f in new[] { cat, val }.Where(x => x != null).SelectMany(x => x.Descendants(C + "f")))
+                ranges.Add(f.Value.Trim());
+            series.Add((sname, Points(cat), Points(val)));
+        }
+        if (title.Length == 0 && series.Count == 1) title = series[0].name;
+        var sb = new StringBuilder($"**Chart{(title.Length > 0 ? ": " + title : "")}**");
+        if (kind.Length > 0) sb.Append($" ({kind} chart)");
+        ranges = ranges.Distinct().ToList();
+        if (ranges.Count > 0) sb.Append("\n\nData: ").Append(string.Join(", ", ranges));
+
+        // the numbers themselves, unless they are in a table on this same sheet (already written above)
+        string own = "'" + sheetName.Replace("'", "''") + "'!";
+        bool sameSheet = ranges.Count > 0 && ranges.All(r => r.StartsWith(sheetName + "!") || r.StartsWith(own) || !r.Contains('!'));
+        if (!sameSheet && series.Count > 0)
+        {
+            int n = series.Max(s => Math.Max(s.cats.Count, s.vals.Count));
+            if (n > 0 && n <= 200)
+            {
+                var rows = new List<List<string>> { new[] { "" }.Concat(series.Select(s => Cell(s.name))).ToList() };
+                for (int i = 0; i < n; i++)
+                {
+                    string label = series.Select(s => i < s.cats.Count ? s.cats[i] : "").FirstOrDefault(x => x.Length > 0) ?? (i + 1).ToString();
+                    rows.Add(new[] { Cell(label) }.Concat(series.Select(s => i < s.vals.Count ? Cell(s.vals[i]) : "")).ToList());
+                }
+                sb.Append("\n\n").Append(MarkdownTable(rows));
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>The values a chart keeps a copy of (its cache), in order, formatted like the cells.</summary>
+    static List<string> Points(XElement el)
+    {
+        var outp = new List<string>();
+        var cache = el?.Descendants().FirstOrDefault(d => d.Name == C + "strCache" || d.Name == C + "numCache" || d.Name == C + "strLit" || d.Name == C + "numLit");
+        if (cache == null) return outp;
+        string code = (string)cache.Element(C + "formatCode") ?? "General";
+        int count = (int?)cache.Element(C + "ptCount")?.Attribute("val") ?? 0;
+        var pts = new Dictionary<int, string>();
+        foreach (var pt in cache.Elements(C + "pt"))
+        {
+            int idx = (int?)pt.Attribute("idx") ?? pts.Count;
+            string v = (string)pt.Element(C + "v") ?? "";
+            if (cache.Name.LocalName.StartsWith("num") && double.TryParse(v, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double d))
+                v = ExcelFormat.Format(d, (string)pt.Attribute("formatCode") ?? code, false);
+            pts[idx] = v;
+        }
+        count = Math.Max(count, pts.Count == 0 ? 0 : pts.Keys.Max() + 1);
+        for (int i = 0; i < Math.Min(count, 1000); i++) outp.Add(pts.TryGetValue(i, out var s) ? s : "");
+        return outp;
+    }
+
+    static int RowIndex(string cellRef)
+    {
+        var m = Regex.Match(cellRef, @"\d+");
+        return m.Success && int.TryParse(m.Value, out int r) ? r : 0;
     }
 
     static int ColumnIndex(string cellRef)
