@@ -74,6 +74,15 @@
             <desktop5:ItemType Type=".gif">
               <desktop5:Verb Id="ConvertToMarkdown" Clsid="6E4B2D1C-8F3A-4C7B-9A21-5D0E7F3B8C42" />
             </desktop5:ItemType>
+            <desktop5:ItemType Type=".doc">
+              <desktop5:Verb Id="ConvertToMarkdown" Clsid="6E4B2D1C-8F3A-4C7B-9A21-5D0E7F3B8C42" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".ppt">
+              <desktop5:Verb Id="ConvertToMarkdown" Clsid="6E4B2D1C-8F3A-4C7B-9A21-5D0E7F3B8C42" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".xls">
+              <desktop5:Verb Id="ConvertToMarkdown" Clsid="6E4B2D1C-8F3A-4C7B-9A21-5D0E7F3B8C42" />
+            </desktop5:ItemType>
           </desktop4:FileExplorerContextMenus>
         </desktop4:Extension>
         <com:Extension Category="windows.comServer">

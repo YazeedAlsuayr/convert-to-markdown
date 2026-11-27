@@ -51,6 +51,10 @@
             <uap:FileType>.tif</uap:FileType>
             <uap:FileType>.tiff</uap:FileType>
             <uap:FileType>.gif</uap:FileType>
+            <!-- old Office formats: not converted; the app tells the user to save them as .docx/.pptx/.xlsx -->
+            <uap:FileType>.doc</uap:FileType>
+            <uap:FileType>.ppt</uap:FileType>
+            <uap:FileType>.xls</uap:FileType>
             </uap:SupportedFileTypes>
           </uap3:FileTypeAssociation>
         </uap3:Extension>
@@ -97,6 +101,15 @@
               <desktop5:Verb Id="ConvertToMarkdown" Clsid="6E4B2D1C-8F3A-4C7B-9A21-5D0E7F3B8C42" />
             </desktop5:ItemType>
             <desktop5:ItemType Type=".gif">
+              <desktop5:Verb Id="ConvertToMarkdown" Clsid="6E4B2D1C-8F3A-4C7B-9A21-5D0E7F3B8C42" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".doc">
+              <desktop5:Verb Id="ConvertToMarkdown" Clsid="6E4B2D1C-8F3A-4C7B-9A21-5D0E7F3B8C42" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".ppt">
+              <desktop5:Verb Id="ConvertToMarkdown" Clsid="6E4B2D1C-8F3A-4C7B-9A21-5D0E7F3B8C42" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".xls">
               <desktop5:Verb Id="ConvertToMarkdown" Clsid="6E4B2D1C-8F3A-4C7B-9A21-5D0E7F3B8C42" />
             </desktop5:ItemType>
           </desktop4:FileExplorerContextMenus>

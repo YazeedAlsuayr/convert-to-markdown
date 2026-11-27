@@ -55,33 +55,55 @@ sealed class OfficeConverter : IDisposable
         this.progress = progress;
         this.ct = ct;
         try { zip = ZipFile.OpenRead(path); }
-        catch (InvalidDataException) { throw new InvalidDataException("This file can't be opened. It may be password-protected or damaged."); }
+        catch (InvalidDataException e) { throw new FriendlyException(WhyNotZip(path), e); }
+    }
+
+    /// <summary>
+    /// A .docx/.pptx/.xlsx is a zip folder. When it isn't one: a password-protected Office file (Office then saves
+    /// it in an older "box" format with an EncryptionInfo part), an old .doc/.ppt/.xls renamed, or a damaged file.
+    /// </summary>
+    static string WhyNotZip(string path)
+    {
+        byte[] head;
+        try
+        {
+            using var f = File.OpenRead(path);
+            head = new byte[(int)Math.Min(f.Length, 1 << 20)];
+            f.ReadExactly(head);
+        }
+        catch { head = Array.Empty<byte>(); }
+        bool oleBox = head.Length >= 8 && head[0] == 0xD0 && head[1] == 0xCF && head[2] == 0x11 && head[3] == 0xE0;
+        if (oleBox && Encoding.Unicode.GetString(head).Contains("EncryptionInfo"))
+            return "Password-protected file. Remove the password in Office and try again.";
+        if (oleBox)
+            return "Old Office file. Save it as .docx, .pptx or .xlsx first.";
+        return "This file is damaged and can't be read.";
     }
 
     public void Dispose() => zip.Dispose();
-
-    /// <summary>True when the file holds any picture (so the AI may be needed).</summary>
-    public static bool HasPictures(string path)
-    {
-        try
-        {
-            using var z = ZipFile.OpenRead(path);
-            return z.Entries.Any(e => e.FullName.Contains("/media/", StringComparison.OrdinalIgnoreCase));
-        }
-        catch { return false; }
-    }
 
     public static async Task<string> ConvertAsync(string path, IProgress<Step> progress, CancellationToken ct)
     {
         using var c = new OfficeConverter(path, progress, ct);
         string ext = Path.GetExtension(path).ToLowerInvariant();
         progress.Report(new Step("Opening the file", 0));
-        string body = ext switch
+        // the file opened fine: start the AI now if it has pictures (a file without pictures doesn't need it)
+        if (c.zip.Entries.Any(e => e.FullName.Contains("/media/", StringComparison.OrdinalIgnoreCase))) Converter.WarmUpAi(ct);
+        string body;
+        try
         {
-            ".docx" or ".docm" => await c.WordAsync(),
-            ".pptx" or ".pptm" => await c.PowerPointAsync(),
-            _ => await c.ExcelAsync()
-        };
+            body = ext switch
+            {
+                ".docx" or ".docm" => await c.WordAsync(),
+                ".pptx" or ".pptm" => await c.PowerPointAsync(),
+                _ => await c.ExcelAsync()
+            };
+        }
+        catch (Exception e) when (e is System.Xml.XmlException or InvalidDataException)
+        {
+            Log.Write("Office read: " + e);
+            throw new FriendlyException("This file is damaged and can't be read.", e);
+        }
         var md = new StringBuilder();
         md.Append(Converter.Mark).Append("\n\n# ").Append(Path.GetFileNameWithoutExtension(path)).Append("\n\n");
         md.Append(c.aiUsed

@@ -179,7 +179,7 @@ static class Program
         {
             Title = "Convert to Markdown",
             Multiselect = true,
-            Filter = "PDF, Office files and pictures|*.pdf;*.docx;*.docm;*.pptx;*.pptm;*.xlsx;*.xlsm;*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.gif|All files|*.*"
+            Filter = "PDF, Office files and pictures|*.pdf;*.docx;*.docm;*.pptx;*.pptm;*.xlsx;*.xlsm;*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.gif;*.doc;*.ppt;*.xls|All files|*.*"
         };
         return dlg.ShowDialog() == true ? dlg.FileNames.ToList() : new List<string>();
     }

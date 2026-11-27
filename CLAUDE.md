@@ -12,7 +12,7 @@ preferences, local paths and private test files; it is not on GitHub).
 - **Stage 4 (Word and PowerPoint)** is committed and pushed on `dev`.
 - **Stage 5 (speed)** is committed and pushed on `dev`.
 - **Also committed on `dev`:** handwriting fix (no lost notes vs `main`), honest "time left", window closes 1 s
-  after success. Next: decide with the owner about merging `dev` -> `main`.
+  after success. **Owner decided (27 Nov): keep everything on `dev` until ALL stages (6-9) are done, then merge to `main`.**
 - **Next after that:** decide with the owner about merging `dev` → `main`, then stage 6.
 - UI wording: never say "Windows OCR" / "Windows handwriting" to users; say "quick built-in reader" (owner's wish).
 - **`Tests/` is in `.gitignore`**: the owner doesn't want any test file on GitHub. Never commit it.
@@ -52,7 +52,7 @@ preferences, local paths and private test files; it is not on GitHub).
 → **Convert to Markdown** → a `.md` file appears next to it. Everything runs locally; files are never uploaded.
 
 Supported: `.pdf .docx .docm .pptx .pptm .xlsx .xlsm .png .jpg .jpeg .bmp .tif .tiff .gif`.
-Old `.doc .ppt .xls` are **not** supported on purpose (the owner decided; the app tells the user to re-save).
+Old `.doc .ppt .xls` are **not** converted on purpose (the owner decided). They DO appear in the right-click menu (since stage 6, owner's wish) only to show "Old PowerPoint format. Save it as .pptx first." (per type).
 
 What it reads:
 - Typed text from the file itself (exact): reading order, columns, lists, tables, footnotes, links, highlights.
@@ -169,7 +169,7 @@ order, titles, bullets/levels, tables, speaker notes, pictures (repeated logos s
 ## 7. Version 2.1 plan (9 stages) and status
 
 Order agreed: 1 → 9. After each stage: owner runs tests (or you do), you grade, he commits to `dev`.
-Merge `dev` → `main` only after stage 5 (speed), when times are compared and he agrees.
+Merge `dev` → `main` only after ALL stages are done (owner decided 27 Nov; earlier plan was after stage 5).
 
 ### Stage 1 — PDF layout ✅ done (on `main` and `dev`)
 Done: columns (incl. 3 columns with unequal starts), Q&A tables, grid tables (spanning header in first
@@ -240,9 +240,17 @@ Results: renal 112 → 110 s (AI handwriting) / 79 s (fast handwriting); challen
 text identical except renal p4 handwriting (better). Office kit outputs identical.
 After-stage-5 fixes: (1) pen-note grouping (`Cluster`) now joins strokes into lines first (`SameRow`), and only then attaches tiny 1-2 stroke pieces (`IsTailOf`: narrow, under/over ONE line) — stage 2 let whole short notes be pulled in stroke by stroke, losing renal p7 "Chronic kidney failure" and "Creatinine 3" and merging p4 "UTI"; now notes per page = `main` (p12 "to" sits inside "Differentiation Normal"). Challenge PDF handwriting text unchanged. (2) Time left: PDF progress is weighted by work per page; guess within ~3-12 s on the renal lecture after 20 s (before: always "Less than 2 min left").
 
-### Stage 6 — clear error messages (todo)
-Password PDF throws `COMException 0x80048040`, damaged PDF `0x80004005`; both show an empty reason today.
-Show e.g. "This PDF is password protected" / "This file is damaged"; other files keep converting (E12, E13).
+### Stage 6 — clear error messages ✅ done (committed and pushed on `dev`, 27 Nov)
+`FriendlyException` (Converter.cs) = a problem with the file, message written for the user. `Converter.Explain(e)`
+turns any error into one plain sentence for the window (setup errors keep their own message); full error in the log.
+Checks: missing / wrong type / old .doc-.ppt-.xls / 0-byte file; can it be read (locked = HResult 32/33, no permission);
+PDF open (0x80048040 or "encrypt" = password, else damaged; 0 pages); Office not a zip -> `WhyNotZip`: OLE box
+(D0 CF 11 E0) with "EncryptionInfo" = password, OLE without = old file renamed, else damaged; XML errors = damaged;
+picture decoder fails = damaged picture; saving the .md fails = read-only folder / .md open elsewhere, or disk full
+(HResult 112/39). AI warm-up moved to after the file opened (`Converter.WarmUpAi`). Window shows up to 4 reasons
+(240 chars each) + "…and N more". Test files: `Tests/private/errors/` (A–I broken + Z good; F and G are simulated
+Office headers, not real Office files; H is locked by PowerShell during the test; readonly-folder gets an icacls
+write-deny during the test). All 9 give the right message; Z still converts; AI not started for A–H. Messages are short (one sentence + fix). Old .doc/.ppt/.xls added to the menu lists (Store and Package manifests, `Installer.Types`, file picker) so the message is reachable; tested with J/K/L.
 
 ### Stage 7 — "Set up for your PC" window (todo)
 PC check + short speed test; recommended settings preselected with time estimates; Speed: Auto / Faster /
@@ -324,7 +332,7 @@ Also run the owner's real files listed in `CLAUDE.local.md` — they matter more
 - Built-in AI via llama.cpp, no Ollama dependency. Default model Qwen3-VL 4B; Gemma 4 optional.
 - Uninstall deletes the AI (no pop-up asking). Keep backup models in `%LOCALAPPDATA%\ConvertToMarkdown\ai\model`.
 - One project folder: the GitHub clone.
-- No support for old `.doc/.ppt/.xls`.
+- No conversion of old `.doc/.ppt/.xls`; but they are in the right-click menu to show how to re-save them (stage 6).
 - App, README and Store text are general (all users, all subjects).
 - Stage 2 lives on `dev` until stage 5; later becomes a Windows-vs-AI handwriting setting.
 

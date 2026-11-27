@@ -289,7 +289,8 @@ class MainWindow : Window
             }
             catch (Exception e)
             {
-                failed.Add((Path.GetFileName(path), e.Message));
+                // a plain reason for the user; the full technical error goes to the log below
+                failed.Add((setup ? "AI setup" : Path.GetFileName(path), setup ? e.Message : Converter.Explain(e)));
                 Log.Write("failed " + path + ": " + e);
             }
             index++;
@@ -360,7 +361,8 @@ class MainWindow : Window
         else
             file.Text = done.Count > 1 ? $"{done.Count} Markdown files were saved" : "No file was saved";
 
-        detail.Text = string.Join("\n", failed.Take(4).Select(f => $"{f.name}: {Short(f.why, 140)}"));
+        detail.Text = string.Join("\n", failed.Take(4).Select(f => $"{f.name}: {Short(f.why, 240)}"))
+                    + (failed.Count > 4 ? $"\n…and {failed.Count - 4} more" : "");
         detail.Foreground = failed.Count > 0 ? Err : Sub;
         buttons.Children.Clear();
         buttons.Children.Add(MakeButton("Close", Close));

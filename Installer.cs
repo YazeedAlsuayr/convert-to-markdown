@@ -16,7 +16,8 @@ static class Installer
     public static bool IsInstalled => File.Exists(Exe);
 
     internal static readonly string[] Types =
-        { ".pdf", ".docx", ".docm", ".pptx", ".pptm", ".xlsx", ".xlsm", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".gif" };
+        { ".pdf", ".docx", ".docm", ".pptx", ".pptm", ".xlsx", ".xlsm", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".gif",
+          ".doc", ".ppt", ".xls" };   // old Office formats: not converted, but the menu shows how to save them as new ones
     const string ProgId = "ConvertToMarkdown.File";
     const string AppKey = @"Software\Classes\Applications\ConvertToMarkdown.exe";
     const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\ConvertToMarkdown";

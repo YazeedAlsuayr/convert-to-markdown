@@ -23,6 +23,12 @@ namespace ConvertToMarkdown;
 
 readonly record struct Step(string Detail, double Frac);
 
+/// <summary>A problem with the file itself, with a message written for the user (shown as it is).</summary>
+sealed class FriendlyException : Exception
+{
+    public FriendlyException(string message, Exception inner = null) : base(message, inner) { }
+}
+
 class Note
 {
     public R Box;
@@ -45,31 +51,75 @@ static class Converter
 
     public static async Task<string> ConvertAsync(string path, IProgress<Step> progress, CancellationToken ct)
     {
-        if (!File.Exists(path)) throw new FileNotFoundException("The file was not found.");
+        if (!File.Exists(path)) throw new FriendlyException("File not found. It may have been moved or deleted.");
         string ext = Path.GetExtension(path).ToLowerInvariant();
-        // start the AI now, while the typed text is read, instead of when the first picture needs it (saves ~4 s);
-        // Office files without any pictures don't need it at all
-        if (Ai.Enabled && (ext == ".pdf" || ImageTypes.Contains(ext) || (OfficeConverter.Types.Contains(ext) && OfficeConverter.HasPictures(path))))
-            _ = Task.Run(async () =>
+        if (ext is ".doc" or ".ppt" or ".xls")
+            throw new FriendlyException(ext switch
             {
-                try { await Ai.EnsureRunningAsync(null, ct); }
-                catch (Exception e) when (e is not OutOfMemoryException) { }   // the real call later reports any problem
+                ".ppt" => "Old PowerPoint format. Save it as .pptx first.",
+                ".xls" => "Old Excel format. Save it as .xlsx first.",
+                _ => "Old Word format. Save it as .docx first."
             });
+        if (ext != ".pdf" && !ImageTypes.Contains(ext) && !OfficeConverter.Types.Contains(ext))
+            throw new FriendlyException("This file type isn't supported.");
+        if (new FileInfo(path).Length == 0)
+            throw new FriendlyException("This file is empty.");
+        // can the file be read at all? (open in another program that blocks it, or no permission)
+        try { using var probe = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { throw new FriendlyException(Explain(e), e); }
+
         string body;
         if (ext == ".pdf") body = await PdfAsync(path, progress, ct);
         else if (ImageTypes.Contains(ext)) body = await ImageAsync(path, progress, ct);
-        else if (OfficeConverter.Types.Contains(ext)) body = await OfficeConverter.ConvertAsync(path, progress, ct);
-        else if (ext is ".doc" or ".ppt" or ".xls")
-            throw new NotSupportedException("This is the old Office format. Open it and use Save As .docx, .pptx or .xlsx, then convert that.");
-        else throw new NotSupportedException("This kind of file isn't supported.");
+        else body = await OfficeConverter.ConvertAsync(path, progress, ct);
 
         string output = TargetPath(path);
-        string tmp = Path.Combine(Program.CacheDir, $"{Environment.TickCount64}_{Path.GetFileName(output)}");
-        await File.WriteAllTextAsync(tmp, body, new UTF8Encoding(false), CancellationToken.None);
-        ct.ThrowIfCancellationRequested();
-        if (File.Exists(output)) File.Delete(output);     // only ever our own earlier output (see TargetPath)
-        File.Move(tmp, output);
+        try
+        {
+            string tmp = Path.Combine(Program.CacheDir, $"{Environment.TickCount64}_{Path.GetFileName(output)}");
+            await File.WriteAllTextAsync(tmp, body, new UTF8Encoding(false), CancellationToken.None);
+            ct.ThrowIfCancellationRequested();
+            if (File.Exists(output)) File.Delete(output);     // only ever our own earlier output (see TargetPath)
+            File.Move(tmp, output);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new FriendlyException(IsDiskFull(e)
+                ? "Disk full. Free some space and try again."
+                : "Can't save here. Copy the file to Documents and try again.", e);
+        }
         return output;
+    }
+
+    /// <summary>
+    /// Starts the AI in the background as soon as a file has opened fine and needs it, while the text is read
+    /// (saves a few seconds). Not before: a damaged or locked file shouldn't start the AI for nothing.
+    /// </summary>
+    internal static void WarmUpAi(CancellationToken ct)
+    {
+        if (!Ai.Enabled) return;
+        _ = Task.Run(async () =>
+        {
+            try { await Ai.EnsureRunningAsync(null, ct); }
+            catch (Exception e) when (e is not OutOfMemoryException) { }   // the real call later reports any problem
+        });
+    }
+
+    static bool IsDiskFull(Exception e) => (e.HResult & 0xFFFF) is 112 or 39;     // ERROR_DISK_FULL, ERROR_HANDLE_DISK_FULL
+
+    /// <summary>A short, plain reason for the progress window (the technical details go to the log).</summary>
+    public static string Explain(Exception e)
+    {
+        int code = e.HResult & 0xFFFF;
+        return e switch
+        {
+            FriendlyException or NotSupportedException => e.Message,
+            UnauthorizedAccessException => "No permission to open this file.",
+            IOException when code is 32 or 33 => "File is open in another program. Close it and try again.",
+            IOException when IsDiskFull(e) => "Disk full. Free some space and try again.",
+            OutOfMemoryException or InsufficientExecutionStackException => "Too big for this PC's memory.",
+            _ => "Something went wrong. Details are in the log."
+        };
     }
 
     /// <summary>name.md next to the file; never overwrites a .md this tool did not write.</summary>
@@ -93,10 +143,28 @@ static class Converter
         progress.Report(new Step("Opening the PDF", 0));
         lock (askedBefore) askedBefore.Clear();          // remembered answers are for one file only
         var clock = System.Diagnostics.Stopwatch.StartNew();
-        var storage = await StorageFile.GetFileFromPathAsync(path);
-        var winDoc = await WinPdfDocument.LoadFromFileAsync(storage);
-        using var doc = PigDocument.Open(path);
+        WinPdfDocument winDoc;
+        PigDocument pig;
+        try
+        {
+            var storage = await StorageFile.GetFileFromPathAsync(path);
+            winDoc = await WinPdfDocument.LoadFromFileAsync(storage);
+            pig = PigDocument.Open(path);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            Log.Write("PDF open: " + e);
+            bool password = (uint)e.HResult == 0x80048040                       // Windows: "password required"
+                            || e.GetType().Name.Contains("Encrypt") || e.Message.Contains("encrypt", StringComparison.OrdinalIgnoreCase);
+            if (password)
+                throw new FriendlyException("Password-protected PDF. Remove the password and try again.", e);
+            if (e is IOException or UnauthorizedAccessException) throw new FriendlyException(Explain(e), e);
+            throw new FriendlyException("This PDF is damaged and can't be read.", e);
+        }
+        using var doc = pig;
         int n = doc.NumberOfPages;
+        if (n == 0) throw new FriendlyException("This PDF has no pages.");
+        WarmUpAi(ct);
 
         // first pass: the typed text of every page (also gives the document's own words)
         var allLines = new List<TextLine>[n + 1];
@@ -1112,7 +1180,14 @@ static class Converter
         progress.Report(new Step("Reading the text in the picture", 0.2));
         var file = await StorageFile.GetFileFromPathAsync(path);
         using var stream = await file.OpenReadAsync();
-        var decoder = await BitmapDecoder.CreateAsync(stream);
+        BitmapDecoder decoder;
+        try { decoder = await BitmapDecoder.CreateAsync(stream); }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            Log.Write("picture open: " + e);
+            throw new FriendlyException("This picture is damaged or not a real picture file.", e);
+        }
+        WarmUpAi(ct);
         double max = OcrEngine.MaxImageDimension;
         double s = Math.Min(1.0, max / Math.Max(decoder.PixelWidth, decoder.PixelHeight));
         var transform = new BitmapTransform
