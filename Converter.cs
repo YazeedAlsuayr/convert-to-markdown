@@ -101,12 +101,32 @@ static class Converter
         // first pass: the typed text of every page (also gives the document's own words)
         var allLines = new List<TextLine>[n + 1];
         var heights = new double[n + 1];
+        // how much work each page is, for an honest "time left": text is quick, every picture and handwriting
+        // means questions to the AI (a page with 3 pictures takes far longer than a page of text)
+        var work = new double[n + 1];
+        bool aiWork = Ai.Enabled;
         for (int i = 1; i <= n; i++)
         {
             ct.ThrowIfCancellationRequested();
-            try { var pg = doc.GetPage(i); heights[i] = pg.Height; allLines[i] = TextLayer.Build(pg); }
-            catch (Exception e) { allLines[i] = new List<TextLine>(); Log.Write($"page {i} text: {e.Message}"); }
+            try
+            {
+                var pg = doc.GetPage(i); heights[i] = pg.Height; allLines[i] = TextLayer.Build(pg);
+                int pictures = PictureRects(pg, skipBanners: true).Count;
+                int ink = 0;
+                try { ink = pg.ExperimentalAccess.GetAnnotations().Count(a => a.Type == UglyToad.PdfPig.Annotations.AnnotationType.Ink); } catch { }
+                work[i] = 0.3 + (aiWork ? 5 * Math.Max(pictures, allLines[i].Count == 0 && pictures == 0 ? 0 : pictures)
+                                        + (ink > 0 ? (Settings.HandwritingAi ? 3 + 0.4 * Math.Min(ink, 60) : 0.5) : 0)
+                                        + (Settings.Describe ? 4 : 0)
+                                        + (allLines[i].Count == 0 && pg.NumberOfImages > 0 ? 6 : 0)   // a scanned page
+                                      : 0.3 * pictures + 0.2 * Math.Min(ink, 60));
+            }
+            catch (Exception e) { allLines[i] ??= new List<TextLine>(); work[i] = 1; Log.Write($"page {i} text: {e.Message}"); }
         }
+        var workBefore = new double[n + 2];
+        for (int i = 1; i <= n; i++) workBefore[i + 1] = workBefore[i] + work[i];
+        double totalWork = Math.Max(workBefore[n + 1], 0.001);
+        // part of the whole file done: page i, "part" (0..1) of the way through that page
+        double Done(int i, double part) => (workBefore[i] + Math.Clamp(part, 0, 1) * work[i]) / totalWork;
         var repeated = RepeatedEdges(allLines, heights, n, out string headerText, out string footerText);
         var vocab = new Vocabulary(allLines.Skip(1).SelectMany(ls => ls.Select(l => l.Text)));
 
@@ -133,7 +153,7 @@ static class Converter
         {
             ct.ThrowIfCancellationRequested();
             string here = $"Page {i} of {n}";
-            progress.Report(new Step(here + "  ·  reading text", (i - 1.0) / n));
+            progress.Report(new Step(here + "  ·  reading text", Done(i, 0)));
             var page = doc.GetPage(i);
             var lines = allLines[i];
             string typed = TextLayer.PageText(lines.Where(l => !repeated[i].Contains(l)).ToList());
@@ -167,7 +187,7 @@ static class Converter
                 var description = new List<string>();
                 if (describe)
                 {
-                    progress.Report(new Step(here + "  ·  describing the layout", (i - 0.9) / n));
+                    progress.Report(new Step(here + "  ·  describing the layout", Done(i, 0.05)));
                     string layout = await AiRegionAsync(winPage, page, P, Ai.DescribePrompt, 110, 200, ct);
                     if (!string.IsNullOrWhiteSpace(layout))
                         description.Add("**Layout:** " + Regex.Replace(layout, @"\s*\n\s*", " ").Trim());
@@ -177,7 +197,7 @@ static class Converter
                 {
                     if (description.Count > 0)
                         md.Append("\n### Description (AI - verify)\n\n").Append(string.Join("\n\n", description)).Append('\n');
-                    progress.Report(new Step(here + "  ·  reading the page images", (i - 0.8) / n));
+                    progress.Report(new Step(here + "  ·  reading the page images", Done(i, 0.1)));
                     md.Append(Ai.Enabled ? "\n### Page text (read from the page images by the AI - verify)\n\n"
                                          : "\n### Page text (read from the page images - verify)\n\n")
                       .Append(await PicturePageAsync(winPage, page, P, ct)).Append('\n');
@@ -190,7 +210,7 @@ static class Converter
                     for (int k = 0; k < pics.Count; k++)
                     {
                         ct.ThrowIfCancellationRequested();
-                        progress.Report(new Step($"{here}  ·  reading picture {k + 1} of {pics.Count}", (i - 0.8 + 0.3 * k / pics.Count) / n));
+                        progress.Report(new Step($"{here}  ·  reading picture {k + 1} of {pics.Count}", Done(i, (0.3 + 5.0 * k) / Math.Max(work[i], 0.001))));
                         string answer = await AiRegionAsync(winPage, page, pics[k], describe ? Ai.PicturePrompt : Ai.PictureTextPrompt, 220, 900, ct);
                         string text;
                         if (answer != null)
@@ -219,7 +239,7 @@ static class Converter
             {
                 var (writing, lineMarks) = SplitMarks(pens);
                 var notesOnPage = Cluster(writing);
-                progress.Report(new Step($"{here}  ·  reading handwriting", (i - 0.4) / n));
+                progress.Report(new Step($"{here}  ·  reading handwriting", Done(i, 1 - 3.0 / Math.Max(work[i], 3))));
                 var read = await ReadHandwritingAsync(notesOnPage, vocab, ct);
                 md.Append("\n### Handwriting (pen) - verify\n");
                 bool wroteNote = false;
@@ -490,30 +510,66 @@ static class Converter
         return (writing, marks);
     }
 
-    static bool Near(R a, R b)
+    /// <summary>Strokes on the same line of writing, touching or close together.</summary>
+    static bool SameRow(R a, R b)
     {
         double gx = Math.Max(Math.Max(b.X0 - a.X1, a.X0 - b.X1), 0);
         double ov = Math.Min(a.Y1, b.Y1) - Math.Max(a.Y0, b.Y0);
         double h = Math.Min(a.H, b.H);
         if (gx == 0 && h > 0 && ov >= 0.5 * h) return true;
-        if (gx <= GapX && h > 0 && ov >= RowOverlap * h) return true;
-        // the tail of a g or y, the dot of an i, an accent: a smaller stroke just under or over a word
-        var (big, small) = a.H >= b.H ? (a, b) : (b, a);
+        return gx <= GapX && h > 0 && ov >= RowOverlap * h;
+    }
+
+    /// <summary>The tail of a g or y, the dot of an i, an accent: a tiny piece just under or over a word.</summary>
+    static bool IsTailOf(Note piece, Note word, double letterH)
+    {
+        R small = piece.Box, big = word.Box;
+        if (piece.Strokes.Count > 2 || big.H > 3.5 * letterH || small.H > 2 * letterH || small.W > 1.5 * letterH) return false;
         double cx = (small.X0 + small.X1) / 2;
         double gy = Math.Max(small.Y0 - big.Y1, big.Y0 - small.Y1);
         return small.H < 0.7 * big.H && small.W < 0.8 * big.H && cx > big.X0 && cx < big.X1 && gy < 0.15 * big.H;
     }
 
+    /// <summary>
+    /// Pen strokes -> notes. First strokes on the same line are joined into words and lines; only then are
+    /// leftover tiny pieces (dots, tails) attached to the word they belong to. Done in this order, a short note
+    /// written just under another one (e.g. "UTI" under "Autoimmune") stays a separate note instead of being
+    /// pulled in stroke by stroke.
+    /// </summary>
     static List<Note> Cluster(List<Note> notes)
     {
         notes = notes.ToList();
-        bool merged = true;
-        while (merged)
+        // typical height of one pen stroke = about one letter (before any strokes are joined; the upper quarter,
+        // so dots and short dashes don't make it too small)
+        var hs = notes.Select(n => n.Box.H).Where(x => x > 0).OrderBy(x => x).ToList();
+        double letterH = hs.Count > 0 ? Math.Max(hs[(int)(hs.Count * 0.75)], 1) : 10;
+
+        void Join(int i, int j)
+        {
+            notes[i].Strokes.AddRange(notes[j].Strokes);
+            notes[i].Box = notes[i].Box.Union(notes[j].Box);
+            notes.RemoveAt(j);
+        }
+        void JoinRows()
+        {
+            for (bool merged = true; merged;)
+            {
+                merged = false;
+                for (int i = 0; i < notes.Count && !merged; i++)
+                    for (int j = i + 1; j < notes.Count && !merged; j++)
+                        if (SameRow(notes[i].Box, notes[j].Box)) { Join(i, j); merged = true; }
+            }
+        }
+
+        JoinRows();
+        // tiny leftover pieces join the word they hang from (a word itself is never pulled into another word)
+        for (bool merged = true; merged;)
         {
             merged = false;
             for (int i = 0; i < notes.Count && !merged; i++)
-                for (int j = i + 1; j < notes.Count && !merged; j++)
-                    if (Near(notes[i].Box, notes[j].Box))
+                for (int j = 0; j < notes.Count && !merged; j++)
+                    if (i != j && notes[j].Strokes.Count <= 2 && notes[i].Strokes.Count > notes[j].Strokes.Count
+                        && IsTailOf(notes[j], notes[i], letterH))
                     {
                         notes[i].Strokes.AddRange(notes[j].Strokes);
                         notes[i].Box = notes[i].Box.Union(notes[j].Box);
@@ -521,6 +577,7 @@ static class Converter
                         merged = true;
                     }
         }
+        JoinRows();                                           // a tail can bring two parts of a line together
         return notes.OrderBy(n => Math.Round(n.Box.Y0 / 25)).ThenBy(n => n.Box.X0).ToList();
     }
 

@@ -304,12 +304,30 @@ class MainWindow : Window
         double overall = (index + frac) / Math.Max(total, 1);
         SetBar(overall);
         double spent = (DateTime.Now - started).TotalSeconds;
-        if (overall > 0.04 && spent > 20)
+        // the speed is measured from when real work starts (starting the AI and opening the file come first and
+        // would make the first guesses far too long)
+        if (workStart < 0 && overall > 0.005) { workStart = spent; workStartDone = overall; }
+        double doneSince = overall - workStartDone, timeSince = spent - workStart;
+        if (workStart >= 0 && !(doneSince > 0.1 || (doneSince > 0.03 && timeSince > 15)))
+            eta.Text = "Calculating time left…";             // too early: one slow picture would give a wild guess
+        else if (workStart >= 0)
         {
-            double left = spent * (1 - overall) / overall;
-            eta.Text = left >= 90 ? $"About {Math.Max(1, (int)Math.Round(left / 60))} min left" : "Less than 2 min left";
+            // time left = speed so far × part still to do; smoothed so the number doesn't jump up and down
+            double left = timeSince * (1 - overall) / doneSince;
+            smoothLeft = smoothLeft < 0 ? left : 0.85 * smoothLeft + 0.15 * left;
+            double s = Math.Max(0, smoothLeft - 0.25);       // this tick is a quarter second later
+            smoothLeft = s;
+            eta.Text = s >= 90 ? $"About {Math.Max(2, (int)Math.Round(s / 60))} min left"
+                     : s >= 50 ? "About 1 min left"
+                     : s >= 8 ? $"About {(int)Math.Round(s / 5) * 5} seconds left"
+                     : "Almost done";
+            if (spent - lastEtaLog >= 10) { lastEtaLog = spent; Log.Write($"time left shown: {eta.Text} (guess {s:0} s)"); }
         }
     }
+
+    double lastEtaLog, workStart = -1, workStartDone;
+
+    double smoothLeft = -1;
 
     void Finish(List<string> done, List<(string name, string why)> failed, bool cancelled)
     {
@@ -349,14 +367,9 @@ class MainWindow : Window
 
         if (done.Count > 0 && failed.Count == 0)
         {
-            int n = 8;
-            eta.Text = $"Closing in {n} s";
+            // like Windows file copy: show "complete" for a moment, then close by itself
             countdown = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            countdown.Tick += (_, _) =>
-            {
-                if (--n <= 0) { countdown.Stop(); Close(); }
-                else eta.Text = $"Closing in {n} s";
-            };
+            countdown.Tick += (_, _) => { countdown.Stop(); Close(); };
             countdown.Start();
         }
     }

@@ -10,7 +10,9 @@ preferences, local paths and private test files; it is not on GitHub).
 - **Branch:** work happens on **`dev`**. `main` = the safe copy (stage 1 only). Never commit to `main`.
 - **Stage 3 (Excel)** is committed and pushed on `dev` (commit `3088263`).
 - **Stage 4 (Word and PowerPoint)** is committed and pushed on `dev`.
-- **Stage 5 (speed)** is committed and pushed on `dev`. Nothing uncommitted.
+- **Stage 5 (speed)** is committed and pushed on `dev`.
+- **Also committed on `dev`:** handwriting fix (no lost notes vs `main`), honest "time left", window closes 1 s
+  after success. Next: decide with the owner about merging `dev` -> `main`.
 - **Next after that:** decide with the owner about merging `dev` → `main`, then stage 6.
 - UI wording: never say "Windows OCR" / "Windows handwriting" to users; say "quick built-in reader" (owner's wish).
 - **`Tests/` is in `.gitignore`**: the owner doesn't want any test file on GitHub. Never commit it.
@@ -99,7 +101,7 @@ PublisherName `Yazeed Alsuayr`). Raise `Version` for every upload (last number s
 | File | What it does |
 |---|---|
 | `Program.cs` | Entry point. One window for many files (named pipe + mutex). Store detection (`IsStore`), `DataDir`, command-line flags (`--settings --setup-ai [qwen\|gemma] --remove-ai --check-ai --ai on\|off --ai-model --remove-model --install --uninstall -Embedding --trust-cert`), taskbar identity, `Log` class (`last_run.log`). |
-| `MainWindow.cs` | The progress window (Windows 11 style). Runs conversions, shows errors. After success it closes itself after 8 s; on failure it stays open. |
+| `MainWindow.cs` | The progress window (Windows 11 style). Runs conversions, shows errors. After success it shows "Conversion complete" and closes after 1 s; on failure it stays open. "Time left" uses the work count from `Converter.PdfAsync` (pictures and ink per page), measured from when real work starts; shows "Calculating time left…" first; logs its guess every 10 s. |
 | `Converter.cs` | **PDF and pictures.** PDF pipeline (below), annotations (highlights, ink, notes), handwriting (`ReadHandwritingAsync`, `InkPng`, `GrayPng`, `RecognizeInkAsync`), picture regions, AI/OCR calls, header/footer detection (`RepeatedEdges`), links (`AddLinks`), `Engines` (Windows OCR + ink recognizer). |
 | `TextLayer.cs` | **PDF typed-text layout engine** (stage 1): glyphs → lines → blocks → reading order; columns, Q&A tables, grid tables (`RenderGrid`), lists (`RenderBlock`), super/subscripts (`MergeScripts`, `Joined`), drawn bullets (`AddDrawnBullets`), Arabic/RTL (`ToLogical`), ligatures (`Clean`), `WordsIn`. |
 | `OfficeConverter.cs` | **Word, PowerPoint, Excel** read directly from the zip/XML (no Office needed). Pictures inside go to the AI (or OCR). Excel part rewritten in stage 3 (`ExcelAsync`, `SheetBlocks`, `RenderBlock`, `DrawingAsync`, `ChartText`, `Points`). |
@@ -154,7 +156,7 @@ order, titles, bullets/levels, tables, speaker notes, pictures (repeated logos s
 
 - **Build:** `dotnet build ConvertToMarkdown.csproj -c Release -nologo -v q`
 - **Run a conversion:** `dotnet run -c Release --no-build -- "<file1>" "<file2>"` (opens the progress window;
-  it closes 8 s after success, stays open after an error). Output `.md` is written next to each input file.
+  it closes 1 s after success, stays open after an error). Output `.md` is written next to each input file.
   Timing and AI calls: `%LOCALAPPDATA%\ConvertToMarkdown\last_run.log` (only the last app run).
 - **Settings for the test kit:** AI on, model Qwen3-VL 4B, Describe off.
 - **`Test.cmd`** does the same for drag-and-drop (writes `test-build.log`).
@@ -236,6 +238,7 @@ owner: quality first). Idea parked for stage 7: optional NVIDIA CUDA 12.4 engine
 CUDA 13 dropped Pascal) — not tested.
 Results: renal 112 → 110 s (AI handwriting) / 79 s (fast handwriting); challenge PDF 50 → 49 s; IBS 31 → 31 s;
 text identical except renal p4 handwriting (better). Office kit outputs identical.
+After-stage-5 fixes: (1) pen-note grouping (`Cluster`) now joins strokes into lines first (`SameRow`), and only then attaches tiny 1-2 stroke pieces (`IsTailOf`: narrow, under/over ONE line) — stage 2 let whole short notes be pulled in stroke by stroke, losing renal p7 "Chronic kidney failure" and "Creatinine 3" and merging p4 "UTI"; now notes per page = `main` (p12 "to" sits inside "Differentiation Normal"). Challenge PDF handwriting text unchanged. (2) Time left: PDF progress is weighted by work per page; guess within ~3-12 s on the renal lecture after 20 s (before: always "Less than 2 min left").
 
 ### Stage 6 — clear error messages (todo)
 Password PDF throws `COMException 0x80048040`, damaged PDF `0x80004005`; both show an empty reason today.
