@@ -116,7 +116,8 @@ static class Program
             ? new List<string> { SetupAiJob + ":" + setupId }
             : args.Where(a => !a.StartsWith("--")).Select(a => Path.GetFullPath(a.Trim('"'))).ToList();
         // no file (or --settings): open the Settings window, which also has "Convert files…"
-        bool showSettings = files.Count == 0 || args.Contains("--settings");
+        bool pcSetup = args.Contains("--setup-pc");          // the "Set up for this PC" page of Settings
+        bool showSettings = files.Count == 0 || args.Contains("--settings") || pcSetup;
         if (showSettings) files.Clear();
 
         using var mutex = new Mutex(true, MutexName, out bool first);
@@ -132,7 +133,7 @@ static class Program
         foreach (var f in files) Pending.Enqueue(f);
 
         var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose };
-        return app.Run(showSettings ? new SettingsWindow() : new MainWindow());
+        return app.Run(showSettings ? new SettingsWindow(pcSetup) : new MainWindow());
     }
 
     [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]

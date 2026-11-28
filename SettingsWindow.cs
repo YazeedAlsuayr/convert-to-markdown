@@ -11,7 +11,7 @@ using System.Windows.Shell;
 
 namespace ConvertToMarkdown;
 
-class SettingsWindow : Window
+partial class SettingsWindow : Window
 {
     readonly bool dark = MainWindow.IsDarkMode();
     Brush Fg, Sub, Head, Line, BtnBg, BtnHover, BtnPress, BtnEdge, Accent, AccentFg, Solid, Hover;
@@ -24,7 +24,10 @@ class SettingsWindow : Window
     readonly TextBlock aiStatus = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 0) };
     readonly StackPanel buttons = new() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
 
-    public SettingsWindow()
+    bool onAdvancedPage;                              // the window shows the "Advanced settings" page now
+
+    /// <param name="pcSetup">first run or --setup-pc: run the speed test if there is none yet</param>
+    public SettingsWindow(bool pcSetup = false)
     {
         MakeBrushes();
         Title = "Convert to Markdown - Settings";
@@ -46,8 +49,16 @@ class SettingsWindow : Window
             CornerRadius = new CornerRadius(0),
             UseAeroCaptionButtons = false
         });
-        Content = Build();
-        Refresh();
+        if (pcSetup) ShowPcPage();
+        else ShowSettingsPage();
+
+        // when the window grows (Advanced page, speed test finished, a model added), keep its bottom on the screen
+        SizeChanged += (_, _) =>
+        {
+            var area = SystemParameters.WorkArea;
+            if (IsLoaded && Top + ActualHeight > area.Bottom - 8)
+                Top = Math.Max(area.Top + 8, area.Bottom - 8 - ActualHeight);
+        };
 
         // files opened from Explorer while Settings is open go straight to conversion
         Action arrived = () => Dispatcher.BeginInvoke(new Action(OpenConversion));
@@ -56,7 +67,80 @@ class SettingsWindow : Window
     }
 
     // ================= layout =================
+    void ShowSettingsPage()
+    {
+        onAdvancedPage = false;
+        Title = "Convert to Markdown - Settings";
+        Content = Build();
+        Refresh();
+        RefreshSpeed();
+        StartTestIfNeeded();
+    }
+
+    /// <summary>
+    /// Simple first: the Speed choice (Faster / More accurate, with this PC's times). Everything else is in the
+    /// "Advanced settings" page (same window, Back returns).
+    /// </summary>
     UIElement Build()
+    {
+        var body = new StackPanel { Margin = new Thickness(16, 14, 16, 16) };
+        body.Children.Add(new TextBlock { Text = "Settings", FontSize = 13.5, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 6) });
+        Detach(speedPanel);                            // kept between rebuilds of this page: take it off the old one
+        body.Children.Add(speedPanel);
+
+        // everything else is in its own window
+        var advancedRow = new Grid { Margin = new Thickness(0, 12, 0, 0) };
+        advancedRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        advancedRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        advancedRow.Children.Add(new TextBlock { Text = "Describe layout, AI on/off, AI model and more.", FontSize = 12, Foreground = Sub,
+                                                 TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) });
+        var advancedButton = MakeButton("Advanced settings…", OpenAdvanced, false);
+        advancedButton.Margin = new Thickness(0);
+        advancedButton.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(advancedButton, 1);
+        advancedRow.Children.Add(advancedButton);
+        body.Children.Add(new Border { Height = 1, Background = Line, Margin = new Thickness(0, 10, 0, 0) });
+        body.Children.Add(advancedRow);
+        return Frame(body, "Changes are saved automatically");
+    }
+
+    /// <summary>Switches this same window to the "Advanced settings" page; its Back button returns to Settings
+    /// (which then shows the times for the new choices).</summary>
+    void OpenAdvanced() => ShowAdvancedPage();
+
+    void ShowAdvancedPage()
+    {
+        onAdvancedPage = true;
+        Title = "Convert to Markdown - Advanced settings";
+        Content = BuildAdvanced();
+        Refresh();
+    }
+
+    /// <summary>The "Advanced settings" window: the detailed switches, the AI models and this PC.</summary>
+    UIElement BuildAdvanced()
+    {
+        var body = new StackPanel { Margin = new Thickness(16, 14, 16, 16) };
+        body.Children.Add(new TextBlock { Text = "Advanced settings", FontSize = 13.5, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 8) });
+        body.Children.Add(Tick("Describe layout and pictures",
+            "Adds a Description section to each page: how it is laid out and what each picture shows. Slower (the Settings page shows how much).",
+            () => Settings.Describe, v => Settings.Describe = v));
+        body.Children.Add(Tick("Use the built-in AI",
+            "Reads the text in pictures and screenshots. When off, a quick built-in reader does it (faster, less accurate).",
+            () => Settings.UseAi, v => { Settings.UseAi = v; Refresh(); }));
+        body.Children.Add(Tick("Accurate handwriting reading (slower)",
+            "Reads pen notes in PDFs with the AI (this is what \"More accurate\" turns on). When off, a quick built-in reader is used. Files without handwriting are not affected.",
+            () => Settings.HandwritingAi, v => Settings.HandwritingAi = v));
+        aiStatus.Foreground = Sub;
+        Detach(aiStatus);
+        Detach(modelList);
+        body.Children.Add(aiStatus);
+        body.Children.Add(modelList);
+        body.Children.Add(PcInfoLine());
+        return Frame(body, "Changes are saved automatically");
+    }
+
+    /// <summary>The window around a page: title bar with close button, the page, a line, a note and the buttons.</summary>
+    UIElement Frame(UIElement body, string footText)
     {
         var root = new StackPanel();
 
@@ -74,31 +158,21 @@ class SettingsWindow : Window
         head.Children.Add(title);
         head.Children.Add(close);
         root.Children.Add(head);
-
-        var body = new StackPanel { Margin = new Thickness(16, 14, 16, 16) };
-        body.Children.Add(new TextBlock { Text = "Settings", FontSize = 13.5, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 8) });
-        body.Children.Add(Tick("Describe layout and pictures",
-            "Adds a Description section to each page: how it is laid out and what each picture shows. About twice as slow.",
-            () => Settings.Describe, v => Settings.Describe = v));
-        body.Children.Add(Tick("Use the built-in AI",
-            "Reads the text in pictures and screenshots. When off, a quick built-in reader does it (faster, less accurate).",
-            () => Settings.UseAi, v => { Settings.UseAi = v; Refresh(); }));
-        body.Children.Add(Tick("Accurate handwriting reading (slower)",
-            "Reads pen notes in PDFs with the AI. When off, a quick built-in reader is used: much faster, less accurate. Files without handwriting are not affected.",
-            () => Settings.HandwritingAi, v => Settings.HandwritingAi = v));
-        aiStatus.Foreground = Sub;
-        body.Children.Add(aiStatus);
-        body.Children.Add(modelList);
+        Detach(body);                                  // the PC page's body is reused when the page is opened again
         root.Children.Add(body);
 
         root.Children.Add(new Border { Height = 1, Background = Line });
         var foot = new Grid { Margin = new Thickness(16, 12, 16, 12), ColumnDefinitions = { new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }, new ColumnDefinition { Width = GridLength.Auto } } };
+        Detach(buttons);                               // the same buttons row moves to the new page
         Grid.SetColumn(buttons, 1);
-        foot.Children.Add(new TextBlock { Text = "Changes are saved automatically", FontSize = 12, Foreground = Sub, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 12, 0) });
+        foot.Children.Add(new TextBlock { Text = footText, FontSize = 12, Foreground = Sub, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 12, 0) });
         foot.Children.Add(buttons);
         root.Children.Add(foot);
         return root;
     }
+
+    /// <summary>Takes a piece off the page it is on, so it can be put on a new page.</summary>
+    static void Detach(UIElement e) => (VisualTreeHelper.GetParent(e) as Panel ?? LogicalTreeHelper.GetParent(e) as Panel)?.Children.Remove(e);
 
     /// <summary>A Windows 11 style tick with a title and a grey explanation under it.</summary>
     UIElement Tick(string text, string explanation, Func<bool> get, Action<bool> set)
@@ -152,6 +226,12 @@ class SettingsWindow : Window
         }
 
         buttons.Children.Clear();
+        if (onAdvancedPage)                            // the Advanced page: back to Settings, or close
+        {
+            buttons.Children.Add(MakeButton("Back", ShowSettingsPage, false));
+            buttons.Children.Add(MakeButton("Close", Close, true));
+            return;
+        }
         if (Ai.ServerExe == null || installed.Count == 0)
             buttons.Children.Add(MakeButton("Set up AI", SetUpAi, false));
         buttons.Children.Add(MakeButton("Convert files…", ConvertFiles, true));

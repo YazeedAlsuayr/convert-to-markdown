@@ -473,6 +473,8 @@ static class Settings
         public string Model { get; set; } = "qwen";
         public bool Describe { get; set; } = false;
         public bool HandwritingAi { get; set; } = true;
+        public bool PcSetupDone { get; set; } = false;
+        public string PcTest { get; set; } = "";      // last speed test: "device|picture s|note s|date"
     }
 
     static Data Load()
@@ -504,6 +506,20 @@ static class Settings
     {
         get => Load().HandwritingAi;
         set { var d = Load(); d.HandwritingAi = value; Save(d); }
+    }
+
+    /// <summary>True once the "Set up for this PC" test has run and a speed was chosen.</summary>
+    public static bool PcSetupDone
+    {
+        get => Load().PcSetupDone;
+        set { var d = Load(); d.PcSetupDone = value; Save(d); }
+    }
+
+    /// <summary>The last speed test result, kept so the window can show it again without testing.</summary>
+    public static string PcTest
+    {
+        get => Load().PcTest ?? "";
+        set { var d = Load(); d.PcTest = value; Save(d); }
     }
 
     public static string Model

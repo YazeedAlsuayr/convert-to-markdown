@@ -11,6 +11,9 @@ preferences, local paths and private test files; it is not on GitHub).
 - **Stage 3 (Excel)** is committed and pushed on `dev` (commit `3088263`).
 - **Stage 4 (Word and PowerPoint)** is committed and pushed on `dev`.
 - **Stage 5 (speed)** is committed and pushed on `dev`.
+- **Stage 6 (error messages)** and **stage 7 part A (Speed settings + PC speed test)** are committed and pushed on `dev`.
+  Next: stage 7 part B (automatic step-down when the graphics card fails; where the AI files live; test on a PC
+  without a usable graphics card).
 - **Also committed on `dev`:** handwriting fix (no lost notes vs `main`), honest "time left", window closes 1 s
   after success. **Owner decided (27 Nov): keep everything on `dev` until ALL stages (6-9) are done, then merge to `main`.**
 - **Next after that:** decide with the owner about merging `dev` → `main`, then stage 6.
@@ -252,8 +255,30 @@ picture decoder fails = damaged picture; saving the .md fails = read-only folder
 Office headers, not real Office files; H is locked by PowerShell during the test; readonly-folder gets an icacls
 write-deny during the test). All 9 give the right message; Z still converts; AI not started for A–H. Messages are short (one sentence + fix). Old .doc/.ppt/.xls added to the menu lists (Store and Package manifests, `Installer.Types`, file picker) so the message is reachable; tested with J/K/L.
 
-### Stage 7 — "Set up for your PC" window (todo)
-PC check + short speed test; recommended settings preselected with time estimates; Speed: Auto / Faster /
+### Stage 7 — "Set up for your PC" ⏳ part A done (committed and pushed on `dev`, 28 Nov); part B todo
+Part A (`PcSetup.cs`, a page of the Settings window — `partial class SettingsWindow`, shared `Frame()`):
+`PcCheck.Look()` (graphics card + memory from the registry display-class keys, RAM via GlobalMemoryStatusEx, free
+disk); speed test `PcCheck.TestAsync` with samples drawn by the app (4 slide-like pictures, 1 report page, 3 "Ink Free"
+note pictures; each different so llama.cpp can't reuse its cache): warm-up, 2 pictures, 2 note groups, 1 page layout
+(DescribePrompt), 1 picture described (PicturePrompt). Shown for a GENERAL example (owner: not his files): "a typical
+20-page PDF with 10 pictures and some handwriting" = 11 s + 10 × picture + 8 × note group; with Describe: pictures use
+the described time + 20 × layout. Times follow the Describe setting; the other case is shown under the choices.
+GTX 1070 test: picture 4.4 s, note 1.7 s, layout 3.2 s, picture described 4.5 s. Model checked per file (real counts):
+renal lecture 112 predicted / 110 real (Describe off), 174 / 168 (on); challenge PDF ~46 / 49 (off), ~95 / 98 (on). Recommends
+More accurate on a graphics card when ≤ 1.6× Faster or ≤ 2 min; first test sets `Settings.HandwritingAi` to the
+recommendation (`PcSetupDone`); result kept in `Settings.PcTest`. Opened by `--setup-pc`, the "Set up for this PC…"
+button under the handwriting option (only when the AI is on), and the first-run setup's last screen. Describe on →
+note "expect about twice these times". Checked on screen (screenshots): layout, Faster / More accurate, Back, reopen.
+Not tested: a PC without a usable graphics card (the app can't tell yet when llama.cpp silently uses the processor),
+the first-run setup button.
+Settings redesign (owner's wish, 28 Nov): main Settings = "Speed" section (`RefreshSpeed` in PcSetup.cs): Faster / More
+accurate with this PC's times, "*For a typical 20-page PDF…" line with the other Describe case, "AI: … · tested … Test again"
+link; the test runs by itself the first time (`StartTestIfNeeded`). Everything else is on an "Advanced settings" page of the SAME window
+(`ShowAdvancedPage`, owner's wish: switch, not a second window), with Back (→ Settings, times refreshed) and Close:
+Describe, Use the built-in AI, Accurate handwriting, AI model list, "This PC: …" line. "Test again" / "Test this PC" / "Cancel" are real
+buttons (`LineWithButton`; owner: a link was hard to spot). The window moves up when it grows. No separate PC page any
+more (`ShowPcPage` = Settings). Checked on screen: layout, Advanced, live times, Test again.
+Part B (todo): PC check + short speed test; recommended settings preselected with time estimates; Speed: Auto / Faster /
 More accurate; automatic step-down if the GPU fails or runs out of memory; reopenable from Settings;
 choose where AI files live (default inside the app's data folder, or a shared folder the user picks).
 The owner wants the app to run on every PC, low-end to high-end: reliability first, then speed.

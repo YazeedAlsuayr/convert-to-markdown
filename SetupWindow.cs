@@ -243,8 +243,11 @@ class SetupWindow : Window
         }
         if (problem != null) page.Children.Add(Paragraph(problem, true));
         footNote.Text = "";
-        if (installed && firstRun)
-            Buttons(("Open Settings", OpenSettingsHere, false), ("Finish", Close, true));
+        if (installed && firstRun && Ai.Enabled)
+            // the AI is ready: test this PC's speed and pick Faster or More accurate
+            Buttons(("Finish", Close, false), ("Set up for this PC", () => OpenSettingsHere(true), true));
+        else if (installed && firstRun)
+            Buttons(("Open Settings", () => OpenSettingsHere(false), false), ("Finish", Close, true));
         else if (installed)
             Buttons(("Open Settings", () => { try { Process.Start(new ProcessStartInfo(Installer.Exe) { UseShellExecute = true }); } catch { } Close(); }, false),
                     ("Finish", Close, true));
@@ -261,9 +264,9 @@ class SetupWindow : Window
     }
 
     /// <summary>Store version: opens Settings in this same copy of the app.</summary>
-    void OpenSettingsHere()
+    void OpenSettingsHere(bool pcSetup)
     {
-        var s = new SettingsWindow();
+        var s = new SettingsWindow(pcSetup);
         Application.Current.MainWindow = s;
         s.Show();
         Close();

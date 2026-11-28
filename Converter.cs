@@ -705,7 +705,7 @@ static class Converter
     // ---------------- handwriting read by the AI ----------------
     const int NotesPerPicture = 8;
 
-    static string NotesPrompt(int count) =>
+    internal static string NotesPrompt(int count) =>
         $"This picture shows {count} separate pieces of handwriting, one under the other. " +
         $"Copy each one exactly as written, in English or Arabic, one answer line per piece, top to bottom: exactly {count} lines. " +
         "Abbreviations and short notes are common. Write arrows as →. " +
